@@ -1,0 +1,34 @@
+﻿ACCELERA - Acceleration Measurment After Neuromodulation
+========================================================
+
+
+Changelog
+=========
+
+Version 1.0.1.23101
+-------------------
+- alpha Version for initial tests
+- external Trigger Mode not implemented yet
+- need .Net Framework 4.8 which may needed to be installed seperate
+
+
+
+==========================================================
+                                  _                       
+     /\                          | |                      
+    /  \      ___    ___    ___  | |   ___   _ __    __ _ 
+   / /\ \    / __|  / __|  / _ \ | |  / _ \ | '__|  / _` |
+  / ____ \  | (__  | (__  |  __/ | | |  __/ | |    | (_| |
+ /_/    \_\  \___|  \___|  \___| |_|  \___| |_|     \__,_|
+                                                          
+                                                          
+
+
+Munich Institute of Biomedical Engineering
+www.bioengineering.tum.de
+Technische Universität München
+Boltzmannstrasse 11
+85748 Garching
+                                                    
+                                                    
+

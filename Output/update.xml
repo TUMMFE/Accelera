@@ -1,0 +1,15 @@
+<Updater>
+  <update appID="Accelera">
+    <version>1.0.1.23106</version>
+    <url>na</url>
+    <fileName>setup_accelera.exe</fileName>
+    <md5>6E7856A3433D3F5CE70A0D526F5D0F54</md5>
+    <description>16.04.2023 Update:
+    - alpha Version for initial tests
+    - external Trigger Mode not implemented yet
+    - need .Net Framework 4.8 which may needed to be installed seperate
+</description>
+    <launchArgs>
+    </launchArgs>
+  </update>
+</Updater>
