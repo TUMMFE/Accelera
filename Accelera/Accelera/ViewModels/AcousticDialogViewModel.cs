@@ -912,9 +912,7 @@ namespace Accelera.ViewModels
         private void OnSaveAsButtonClicked()
         {
             Globals.Log.Info("SAVE AS BUTTON CLICKED.");
-            // safe preference file
-            SystemSettings settings = new SystemSettings();
-            settings.SaveOrCreate(_configuration);
+            
 
             //link blockId in storage data to each record.
             int dataPointsPerBlock = _stimuliPerBlock * _configuration.NumberOfSamplesPerAcousticStimulus;
@@ -927,6 +925,17 @@ namespace Accelera.ViewModels
                     id++;
                 }
             }
+
+            //save summary file
+            _configuration.TotalNumberOfAquiredBlocks = _counterBlocks;
+            _configuration.TotalNumberOfAquiredDataFrames = _storageData.Count();
+            _configuration.TotalNumberOfAquiredEvents = _storageData[_storageData.Count() - 1].EventId + 1;
+            _configuration.SetValueSamplesPerDataFrame = _configuration.NumberOfSamplesPerAcousticStimulus;
+            _configuration.DateTimeOfExperiment = DateTime.Now;
+
+            // safe preference file
+            SystemSettings settings = new SystemSettings();
+            settings.SaveOrCreate(_configuration);
 
             SaveAsView saveAsDialog = new SaveAsView();
             ((SaveAsViewModel)saveAsDialog.DataContext).StorageData = _storageData;
