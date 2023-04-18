@@ -642,7 +642,7 @@ namespace Accelera.ViewModels
         }
         private void PauseProgressBackgroundWorker(object sender, DoWorkEventArgs e)
         {
-            while ((_elapsedPauseTime < _configuration.DurationOfEventInSeconds) & (_pauseProgressBackgroundWorker.CancellationPending == false))
+            while ((_elapsedPauseTime < _configuration.PauseTimeinSeconds) & (_pauseProgressBackgroundWorker.CancellationPending == false))
             {
 
             }
@@ -651,7 +651,7 @@ namespace Accelera.ViewModels
                 e.Cancel = true;
                 return;
             }
-            if (_elapsedPauseTime == _configuration.DurationOfEventInSeconds)
+            if (_elapsedPauseTime == _configuration.PauseTimeinSeconds)
             {
                 e.Result = 15;
             }            
