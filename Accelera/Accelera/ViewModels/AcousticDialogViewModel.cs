@@ -543,6 +543,8 @@ namespace Accelera.ViewModels
                 _tsStimulationTimer = new CancellationTokenSource();
                 var dueTime = TimeSpan.FromSeconds(0);
                 var interval = TimeSpan.FromSeconds(1000 / _configuration.FrequencyOfAcousticStimulusInMillihertz);
+                TimeMarks evtTime = new TimeMarks() { Type = "Block Resume", AbsoluteTimeStamp = ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds() };
+                _configuration.AbsoluteTimeMarks.Add(evtTime);
                 RunPeriodicAsync(OnStimulusTick, dueTime, interval, _tsStimulationTimer.Token);
                 _singleProgressBlockBackgroundWorker = new BackgroundWorker();
                 _singleProgressBlockBackgroundWorker.WorkerSupportsCancellation = true;
@@ -610,6 +612,8 @@ namespace Accelera.ViewModels
                     _pauseProgressBackgroundWorker.DoWork += new DoWorkEventHandler(PauseProgressBackgroundWorker);
                     _pauseProgressBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(PauseProgressBackgroundWorkerCompleted);
                     _pauseProgressBackgroundWorker.RunWorkerAsync();
+                    TimeMarks evtTime = new TimeMarks() { Type = "Block Pause", AbsoluteTimeStamp = ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds() };
+                    _configuration.AbsoluteTimeMarks.Add(evtTime);
                     _pauseTimer.Start();
                 }
                 else
@@ -672,10 +676,14 @@ namespace Accelera.ViewModels
                 _configuration.TotalNumberOfAquiredBlocks = _counterBlocks;
                 _configuration.TotalNumberOfAquiredDataFrames = _storageData.Count();
                 _configuration.TotalNumberOfAquiredEvents = _storageData[_storageData.Count() - 1].EventId + 1;
-                _configuration.SetValueSamplesPerDataFrame = _configuration.NumberOfSamplesPerAcousticStimulus;
-                _configuration.DateTimeOfExperiment = DateTime.Now;
+                _configuration.SetValueSamplesPerDataFrame = _configuration.NumberOfSamplesPerAcousticStimulus;                
                 var infoFile = Path.ChangeExtension(_fileNameSave, ".info");
                 _configuration.SaveAsFile(infoFile);
+
+                //save timestep file
+                var timestepFile = Path.ChangeExtension(_fileNameSave, ".time");
+                _configuration.SaveTimeSteps(timestepFile);
+
 
                 // safe preference file
                 SystemSettings settings = new SystemSettings();
@@ -743,6 +751,8 @@ namespace Accelera.ViewModels
         private void OnStimulusTick()
         {
             _usedDeviceVcp.Port.Write(_hw.SetSamples((short)_configuration.NumberOfSamplesPerAcousticStimulus, true, false), 0, hw.TxProtocolLength);
+            TimeMarks evtTime = new TimeMarks() { Type = "DAQ Started", AbsoluteTimeStamp = ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds() };
+            _configuration.AbsoluteTimeMarks.Add(evtTime);
             _counterStimuliBlock++;
             _counterStimuliTotal++;
             CurrentProgressSingleBlock = _counterStimuliBlock;
@@ -800,9 +810,13 @@ namespace Accelera.ViewModels
             CurrentProgressSingleBlock = 0;
             CurrentProgressTotal = 0;
             CurrentProgressPause = 0;
+            _configuration.AbsoluteTimeMarks.Clear();
 
             var dueTime = TimeSpan.FromSeconds(0);
             var interval = TimeSpan.FromSeconds(1000 / _configuration.FrequencyOfAcousticStimulusInMillihertz);
+            _configuration.DateTimeOfExperiment = DateTime.Now;
+            TimeMarks evtTime = new TimeMarks() { Type = "User Start", AbsoluteTimeStamp = ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds() };
+            _configuration.AbsoluteTimeMarks.Add(evtTime);            
             _tsStimulationTimer = new CancellationTokenSource();
 
             _pauseTimer = new DispatcherTimerEx();
@@ -850,6 +864,9 @@ namespace Accelera.ViewModels
             _ts.Dispose();                      //destroy the cancellation token of the data reception task
             _tsStimulationTimer.Cancel();       //cancel the stimulation time task 
 
+            TimeMarks evtTime = new TimeMarks() { Type = "User Stop", AbsoluteTimeStamp = ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds() };
+            _configuration.AbsoluteTimeMarks.Add(evtTime);
+
             //wait at least one period intervall second, thus the task has a chance to be cancled.
             Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait; 
             var sleepTime = TimeSpan.FromSeconds((1000 / _configuration.FrequencyOfAcousticStimulusInMillihertz));
@@ -892,6 +909,9 @@ namespace Accelera.ViewModels
             _canSave = (_storageData.Count > 0) ? true : false;
             _canCancel = true;
 
+            TimeMarks evtTime = new TimeMarks() { Type = "User Pause", AbsoluteTimeStamp = ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds() };
+            _configuration.AbsoluteTimeMarks.Add(evtTime);
+
             _singleProgressBlockBackgroundWorker.CancelAsync();
             //A pause request must be treated differently depending on the state of the stimulation protocoll
             // - if a stimulation block is currently running, then the stimulation timer must be cancled to stop further stimuli
@@ -932,7 +952,10 @@ namespace Accelera.ViewModels
             _canResume = false;
             _canSave = false;
             _canCancel = false;
-            
+
+            TimeMarks evtTime = new TimeMarks() { Type = "User Resume", AbsoluteTimeStamp = ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds() };
+            _configuration.AbsoluteTimeMarks.Add(evtTime);
+
             //A resume request must be treated differently depending on the state of the stimulation protocoll
             // - if a stimulation block was running before, then the stimulation timer must be started again
             // - if a stimulation pause was active before, then the pause timer must be resumed

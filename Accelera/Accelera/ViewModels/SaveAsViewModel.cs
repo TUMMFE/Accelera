@@ -397,11 +397,13 @@ namespace Accelera.ViewModels
                 _configuration.TotalNumberOfAquiredDataFrames = StorageData.Count();
                 _configuration.TotalNumberOfAquiredEvents = StorageData[StorageData.Count() - 1].EventId + 1;
                 _configuration.SetValueSamplesPerDataFrame = ExperimentConfig.NumberOfSamplesPerAcousticStimulus;
-                _configuration.DateTimeOfExperiment = DateTime.Now;
 
                 var infoFile = Path.ChangeExtension(_fileNameSave, ".info");
                 _configuration.SaveAsFile(infoFile);
-                
+
+                //save timestep file
+                var timestepFile = Path.ChangeExtension(_fileNameSave, ".time");
+                _configuration.SaveTimeSteps(timestepFile);
 
                 Globals.Log.Info("Saving data file finished.");
                 MessageBox.Show("Saving of data file finished.", "Information");

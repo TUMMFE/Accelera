@@ -123,6 +123,7 @@
     <Compile Include="Models\Extension.cs" />
     <Compile Include="Models\Serializing.cs" />
     <Compile Include="Models\SystemSettings.cs" />
+    <Compile Include="Models\TimeMarks.cs" />
     <Compile Include="ViewModels\AboutDialogViewModel.cs" />
     <Compile Include="ViewModels\AcousticDialogViewModel.cs" />
     <Compile Include="ViewModels\ConfigurationDialogViewModel.cs" />

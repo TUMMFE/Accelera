@@ -1,5 +1,7 @@
-﻿using System;
+﻿using CsvHelper;
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Printing;
@@ -49,6 +51,8 @@ namespace Accelera.Models
         private List<string> _namesOfExaminers;
         private List<string> _placesOfExperiments;
         private List<string> _typesOfExperiments;
+        private List<TimeMarks> _absoluteTimeMarks;
+
 
         public double OutputDataRate { get => _outputDataRate; set => _outputDataRate = value; }
         public byte HighpassFilterFrequency { get => _highpassFilterFrequency; set => _highpassFilterFrequency = value; }
@@ -84,11 +88,17 @@ namespace Accelera.Models
         public List<string> NamesOfExaminers { get => _namesOfExaminers; set => _namesOfExaminers = value; }
         public List<string> PlacesOfExperiments { get => _placesOfExperiments; set => _placesOfExperiments = value; }
         public List<string> TypesOfExperiments { get => _typesOfExperiments; set => _typesOfExperiments = value; }
+        public List<TimeMarks> AbsoluteTimeMarks { get => _absoluteTimeMarks; set => _absoluteTimeMarks = value; }
+
+
+        
 
         public ConfigurationModel()
         {
             _namesOfExaminers = new List<string>();
-
+            _placesOfExperiments = new List<string>();
+            _typesOfExperiments = new List<string>();
+            _absoluteTimeMarks = new List<TimeMarks>();
         }
 
         public ConfigurationModel(bool createStandardValues)
@@ -116,7 +126,7 @@ namespace Accelera.Models
                 _pauseTimeinSeconds = 600;
                 _blockRepetitions = 10;
                 _namesOfExaminers.Add("Peter Venkman");
-                _namesOfExaminers.Add("Raysmond Stantz");
+                _namesOfExaminers.Add("Raymond Stantz");
                 _namesOfExaminers.Add("Egon Spengler");
                 _placesOfExperiments.Add("Thumb, left");
                 _placesOfExperiments.Add("Thumb, right");
@@ -136,7 +146,7 @@ namespace Accelera.Models
                 sw.WriteLine("Handedness: " + _handednessOfSubject);
                 sw.WriteLine("Type of Experiment: " + _typeOfExperiment);
                 sw.WriteLine("Place of Experiment: " + _placeOfExperiment);
-                sw.WriteLine("Date/Time: " + _dateTimeOfExperiment.ToString());                
+                sw.WriteLine("Start Date/Time: " + _dateTimeOfExperiment.ToString());                
                 sw.WriteLine("=== SUMMARY ===");
                 sw.WriteLine("Total Number of Aquired Data Frames: " + _totalNumberOfAquirecDataFrames);
                 sw.WriteLine("Total Number of Aquired Events: "+_totalNumberOfAquirecEvents);
@@ -164,6 +174,26 @@ namespace Accelera.Models
                 sw.WriteLine("Comments: " + _comments);
             }
 
+        }
+
+        public void SaveTimeSteps(string filename)
+        {
+            List<TimeMarks> time = new List<TimeMarks>();
+
+            foreach (var t in _absoluteTimeMarks)
+            {
+                TimeMarks tm = new TimeMarks();
+                tm.Type = t.Type;
+                tm.AbsoluteTimeStamp = t.AbsoluteTimeStamp;
+                tm.RelativeTimeStamp = t.AbsoluteTimeStamp - _absoluteTimeMarks[0].AbsoluteTimeStamp;
+                time.Add(tm);
+            }
+            
+            using (var writer = new StreamWriter(filename))
+            using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+            {
+                csv.WriteRecords(time);
+            }
         }
     }
 }
