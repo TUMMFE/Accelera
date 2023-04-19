@@ -24,6 +24,9 @@ using System.Threading.Tasks.Dataflow;
 using System.Windows;
 using System.Windows.Input;
 using Ookii.Dialogs.Wpf;
+using System.Diagnostics;
+using System.Windows.Markup;
+using MathNet.Numerics;
 
 namespace Accelera.ViewModels
 {
@@ -35,6 +38,7 @@ namespace Accelera.ViewModels
         public const int MaximumRollover = 1000;
         public const int DecimationFactor = 10;
         public const int MinimumDataSizePrioDownsampling = 100;
+        public const int MaximumDataPlotOffline = 40000;
         #endregion
 
         #region Private Members       
@@ -48,11 +52,34 @@ namespace Accelera.ViewModels
         private ConnectDialogModel _connectModel;
         private ConfigurationModel _configuration;
 
+        private ProgressDialog _saveProgressDialog = new ProgressDialog() 
+        {
+            WindowTitle = "Save data",
+            Text = "Saving aquired data on hard disk ...",
+            Description = "Processing...",
+            ShowTimeRemaining = true,            
+            CancellationText = "Saving cancled. Datafile not written completly.",
+        };
+
+        private ProgressDialog _openProgressDialog = new ProgressDialog()
+        {
+            WindowTitle = "Open data file",
+            Text = "Loading data from disk ...",
+            Description = "Processing...",
+            ShowTimeRemaining = true,
+            CancellationText = "Loading cancled. Datafile will not be shown.",
+        };
+        private string _fileNameSave = string.Empty;
+        private string _fileNameOpen = string.Empty;
+        List<DataModel> _openData = new List<DataModel>();
+
         private bool _isRunning;
         private bool _isConnected;
         private bool _isDataAvailable;
         private bool _isRunningAcoustic;
         private bool _isRunningExternal;
+
+        private bool _dataSavingFinished = false;
         
         
         #endregion
@@ -101,11 +128,13 @@ namespace Accelera.ViewModels
             AccelerationPlotModel.Series.Add(new LineSeries() { Color = OxyColors.DodgerBlue, InterpolationAlgorithm = InterpolationAlgorithms.CanonicalSpline });
             PlotAxisFormatting(AccelerationPlotModel, "Acceleration", "time in s", "acceleration in m/s^2");
 
-       
-            Globals.Log.Info("== MainWindowViewModel ==");
-
-
+            _saveProgressDialog.DoWork += new DoWorkEventHandler(SaveProgressDialogDoWork);
+            _saveProgressDialog.RunWorkerCompleted += new RunWorkerCompletedEventHandler(SaveProgressDialogCompleted);
+            _openProgressDialog.DoWork += new DoWorkEventHandler(OpenProgressDialogDoWork);
+            _openProgressDialog.RunWorkerCompleted += new RunWorkerCompletedEventHandler(OpenProgressDialogCompleted);
+            Globals.Log.Wpf("== MainWindowViewModel ==");
         }
+       
         #endregion
 
         #region Member Methods
@@ -259,6 +288,193 @@ namespace Accelera.ViewModels
             target.Post(data);
         }
 
+        public void PlotData(PlotModel pm, List<Tuple<double, double>> xData, List<Tuple<double, double>> yData, List<Tuple<double, double>> zData)
+        {
+            int Threshold = MinimumDataSizePrioDownsampling / DecimationFactor;
+            IEnumerable<Tuple<double, double>> xInterpolated = LargestTriangleThreeBuckets(xData, Threshold);
+            IEnumerable<Tuple<double, double>> yInterpolated = LargestTriangleThreeBuckets(yData, Threshold);
+            IEnumerable<Tuple<double, double>> zInterpolated = LargestTriangleThreeBuckets(zData, Threshold);
+            foreach (Tuple<double, double> item in xInterpolated)
+            {
+                (pm.Series[0] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
+            }
+            foreach (Tuple<double, double> item in yInterpolated)
+            {
+                (pm.Series[1] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
+            }
+            foreach (Tuple<double, double> item in zInterpolated)
+            {
+                (pm.Series[2] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
+            }
+
+            if ((pm.Series[0] as LineSeries).Points.Count > MaximumRollover) //show only some last points
+            {
+                (pm.Series[0] as LineSeries).Points.RemoveRange(0, xInterpolated.Count()); //remove first point
+                (pm.Series[1] as LineSeries).Points.RemoveRange(0, yInterpolated.Count()); //remove first point
+                (pm.Series[2] as LineSeries).Points.RemoveRange(0, zInterpolated.Count()); //remove first point
+            }
+            pm.InvalidatePlot(true);
+        }
+
+        private void ReadInformationFile()
+        {
+            string infoFileName = Path.ChangeExtension(_fileNameOpen, ".info");
+            if (File.Exists(infoFileName) == false)
+            {
+
+                Globals.Log.Info("No info file available: " + infoFileName);
+            }
+            else
+            {
+                //a info file is available - read it line by line and extract the necessary information
+                Globals.Log.Info("Info file available: " + infoFileName);
+                var lines = File.ReadAllLines(infoFileName);
+                for (var i = 0; i < lines.Length; i += 1)
+                {
+                    var line = lines[i];
+                    // Process line
+                }
+                try
+                {
+                    int readStimulationRate = Convert.ToInt32(Regex.Match(lines[20], @"\d+").Value);
+                    int readPauseTime = Convert.ToInt32(Regex.Match(lines[30], @"\d+").Value);
+                    int eventDuration = 1000 / readStimulationRate;
+                    _openData.RemoveAll(s => s.SampleId <= 50);
+                    //change the data set file - adjust the time points and stich the events together
+                    for (int i = 0; i < _openData.Count; i += 1)
+                    {
+                        _openData[i].TimeInSec = _openData[i].TimeInSec + _openData[i].EventId * eventDuration + _openData[i].BlockId * readPauseTime;
+                    }
+
+                }
+                catch
+                {
+                    MessageBox.Show("Wrong file format of info file.", "Error");
+                    Globals.Log.Warn("Wrong info file format.");
+                }
+            }
+
+            _openData.RemoveAll(s => (s.XRawData == 0 || s.YRawData == 0 || s.ZRawData == 0 || s.TempRawData == 0));
+
+        }
+
+        ///=================================================================================================
+        /// <summary>Decimate and plot data file.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="data">data set which should be plotted</param>
+        /// <param name="decimationFactor">Decimation factor of the data set</param>
+        /// <param name="plotAbsoluteValueOnly">True to plot absolute value only (false will plot all 
+        ///                                      three axes but not the absolute value.</param>
+        ///=================================================================================================
+
+        private void DecimateAndPlotDataFile(List<DataModel> data, int decimationFactor, bool plotAbsoluteValueOnly)
+        {
+            int thr = data.Count / decimationFactor; //this is the number of date which shall be returned by the interpolation
+
+            //1. create data tuples
+
+            List<Tuple<double, double>> tupleListX = new List<Tuple<double, double>>();
+            List<Tuple<double, double>> tupleListY = new List<Tuple<double, double>>();
+            List<Tuple<double, double>> tupleListZ = new List<Tuple<double, double>>();
+            List<Tuple<double, double>> tupleListAbs = new List<Tuple<double, double>>();
+            Tuple<double, double> tupleX;
+            Tuple<double, double> tupleY;
+            Tuple<double, double> tupleZ;
+            Tuple<double, double> tupleAbs;
+
+            foreach (var d in data)
+            {
+                tupleListX.Add(Tuple.Create(d.TimeInSec, d.XAccelerationInMeterPerSecondSquare));
+                tupleListY.Add(Tuple.Create(d.TimeInSec, d.YAccelerationInMeterPerSecondSquare));
+                tupleListZ.Add(Tuple.Create(d.TimeInSec, d.ZAccelerationInMeterPerSecondSquare));
+                double abs = d.XAccelerationInMeterPerSecondSquare * d.XAccelerationInMeterPerSecondSquare + d.YAccelerationInMeterPerSecondSquare * d.YAccelerationInMeterPerSecondSquare + d.ZAccelerationInMeterPerSecondSquare * d.ZAccelerationInMeterPerSecondSquare;
+                abs = Math.Sqrt(abs);
+                tupleListAbs.Add(Tuple.Create(d.TimeInSec, abs));
+            }
+
+            //2. delete and clear all existing data points and line series
+            for (int i = 0; i < AccelerationPlotModel.Series.Count; i++)
+            {
+                (AccelerationPlotModel.Series[i] as LineSeries).Points.Clear();
+            }
+            AccelerationPlotModel.Series.Clear();
+            AccelerationPlotModel.InvalidatePlot(true);
+
+            if (plotAbsoluteValueOnly == true)
+            {
+                AccelerationPlotModel.Legends.Add(new Legend()
+                {
+                    LegendTitle = "Direction",
+                    LegendPosition = LegendPosition.LeftBottom
+                });
+
+                AccelerationPlotModel.Axes[0].Title = "time in s";
+                AccelerationPlotModel.Axes[1].Title = "acceleration in m/s^2";
+                AccelerationPlotModel.Series.Add(new LineSeries() { Color = OxyColor.FromRgb(43, 138, 128), Title = "absolut value (|a|)" });
+
+                IEnumerable<Tuple<double, double>> absInterpolated = LargestTriangleThreeBuckets(tupleListAbs, thr);
+                foreach (var item in absInterpolated)
+                {
+                    (AccelerationPlotModel.Series[0] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
+                }
+            }
+            else
+            {
+                PreparePlot(AccelerationPlotModel, "time in s", "acceleration in m/s^2");
+
+                IEnumerable<Tuple<double, double>> xInterpolated = LargestTriangleThreeBuckets(tupleListX, thr);
+                foreach (var item in xInterpolated)
+                {
+                    (AccelerationPlotModel.Series[0] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
+                }
+
+                IEnumerable<Tuple<double, double>> yInterpolated = LargestTriangleThreeBuckets(tupleListY, thr);
+                foreach (var item in yInterpolated)
+                {
+                    (AccelerationPlotModel.Series[1] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
+                }
+
+                IEnumerable<Tuple<double, double>> zInterpolated = LargestTriangleThreeBuckets(tupleListZ, thr);
+                foreach (var item in zInterpolated)
+                {
+                    (AccelerationPlotModel.Series[2] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
+                }
+            }
+            AccelerationPlotModel.InvalidatePlot(true);
+        }
+
+        private void PlotExistingData()
+        {
+            int decimationFactor = _openData.Count() / MaximumDataPlotOffline + 1;
+            using (TaskDialog dialog = new TaskDialog())
+            {
+                dialog.WindowTitle = "Open data file";
+                dialog.MainInstruction = "What do you want to see?";
+                dialog.Content = "You can chose between the plot of all three different acceleration axes or the absolute acceleration. The absolut value of the acceleration will give you some information about the value, where as the 3-axis plot will show the direction.";
+                dialog.ExpandedInformation = "All plots will show all raw data points without any signal processing except for the first 50 data points of each event which will be deleted to avoid transients. Also, all data points with zero acceleration will be removed for plotting.";
+                dialog.Footer = "User our Python scripts for detailed data anaylsis. You know who you gonna call...";
+                dialog.FooterIcon = TaskDialogIcon.Information;
+                dialog.EnableHyperlinks = true;
+                TaskDialogButton threeAxes = new TaskDialogButton("3-Axes");
+                TaskDialogButton absolutValue = new TaskDialogButton("|a| only");
+                dialog.Buttons.Add(absolutValue);
+                dialog.Buttons.Add(threeAxes);
+                TaskDialogButton button = dialog.ShowDialog();
+                if (button == threeAxes)
+                {
+                    Globals.Log.Info("Plot all three axes.");
+                    DecimateAndPlotDataFile(_openData, decimationFactor, false);
+                }
+                else if (button == absolutValue)
+                {
+                    Globals.Log.Info("Plot absolut value only.");
+                    DecimateAndPlotDataFile(_openData, decimationFactor, true);
+                }
+            }
+        }
+
         #endregion
 
         #region Relay Commands
@@ -276,8 +492,9 @@ namespace Accelera.ViewModels
 
         public ICommand AboutButtonClicked { get { return new RelayCommand(OnAboutButtonClicked, CanAboutBeExecuted); } }
 
-        
+        #endregion
 
+        #region Enable Control of Buttons
         /// <summary>
         /// The save button can only be used if there is some data available to be saved
         /// </summary>
@@ -352,6 +569,105 @@ namespace Accelera.ViewModels
         {
             return (!_isRunning & !_isRunningAcoustic & !_isRunningExternal);
         }
+        #endregion
+
+        #region Background Worker Tasks
+        private void SaveProgressDialogDoWork(object sender, DoWorkEventArgs e)
+        {
+            double progress = 0;
+            int percent = 0;
+            int previous = 0;
+
+            using (var writer = new StreamWriter(_fileNameSave))
+            using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+            {
+                csv.WriteHeader<DataModel>();
+                csv.NextRecord();
+                int cnt = 0;
+                foreach (var item in _storageData)
+                {
+                    if (_saveProgressDialog.CancellationPending == true)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+                    else
+                    {
+                        csv.WriteRecord(item);
+                        csv.NextRecord();
+                        cnt++;
+                        progress = cnt / _storageData.Count;
+
+                        percent = (int)(progress * 100.0);
+                        if (percent > previous)
+                        {
+                            // slow down the report progress to see animation bar
+                            _saveProgressDialog.ReportProgress(percent, null, string.Format(System.Globalization.CultureInfo.CurrentCulture, "Processing: {0}%", percent));
+                            previous = percent;
+                        }
+                    }
+                }
+                _dataSavingFinished = true;
+                e.Result = _dataSavingFinished;
+            }
+        }
+        private void SaveProgressDialogCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Cancelled == true)
+            {
+                Globals.Log.Info("Saving data file cancelled.");
+                MessageBox.Show("Saving of data file was cancelled. Data might be corrupt or not complete.", "Information");
+            }
+            else if ((bool)e.Result == _dataSavingFinished)
+            {
+                Globals.Log.Info("Saving data file finished.");
+                MessageBox.Show("Saving of data file finished.", "Information");
+            }
+
+        }
+        private void OpenProgressDialogDoWork(object sender, DoWorkEventArgs e)
+        {
+            int percent = 0;
+            int previous = 0;
+
+            using (var reader = new StreamReader(_fileNameOpen))
+            using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
+            {
+                while (csv.Read() && (_openProgressDialog.CancellationPending == false))
+                {
+                    _openData.Add(csv.GetRecord<DataModel>());
+                    double progress = (double)reader.BaseStream.Position / reader.BaseStream.Length;
+                    percent = (int)(progress * 100.0);
+                    if (percent > previous)
+                    {
+                        // slow down the report progress to see animation bar
+                        _openProgressDialog.ReportProgress(percent, null, string.Format(System.Globalization.CultureInfo.CurrentCulture, "Processing: {0}%", percent));
+                        previous = percent;
+                    }
+                }
+                if (_openProgressDialog.CancellationPending == true)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+            }
+        }
+        private void OpenProgressDialogCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Cancelled == true)
+            {
+                Globals.Log.Info("Open data file cancelled.");
+                MessageBox.Show("Open data file was cancelled.", "Information");
+            }
+            else
+            {
+                ReadInformationFile();
+                PlotExistingData();
+            }
+        }
+        #endregion
+
+        #region Button Clicked Methods
         /// <summary>
         /// When the save button was clicked, the user will be asked for
         /// a filename (using the SaveFileDialog), and afterwards the 
@@ -360,146 +676,39 @@ namespace Accelera.ViewModels
         /// </summary>
         private void OnSaveButtonClicked() 
         {
-            Globals.Log.Info("SAVE BUTTON CLICKED.");
+            Globals.Log.Wpf("SAVE BUTTON CLICKED.");
             SaveFileDialog sdialog = new SaveFileDialog();
-            string fileName = string.Empty;
+           
 
             //remove not valid data
             _storageData.RemoveAll(s => (s.XRawData == 0 || s.YRawData == 0 || s.ZRawData == 0 || s.TempRawData == 0));
 
             sdialog.Filter = "CSV File (*.csv)|*.csv";
             if (sdialog.ShowDialog() == true)
-            {
-                fileName = sdialog.FileName;
-                using (var writer = new StreamWriter(fileName))
-                using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
-                {                        
-                    csv.WriteRecords(_storageData);
-                }
-
+            {                
+                _fileNameSave = sdialog.FileName;
+                _saveProgressDialog.Show();
             }
         }
+        
         private void OnOpenButtonClicked()
-        {
-            List<DataModel> openData = new List<DataModel>();            
-            Globals.Log.Info("OPEN BUTTON CLICKED.");
+        {                       
+            Globals.Log.Wpf("OPEN BUTTON CLICKED.");
             OpenFileDialog sdialog = new OpenFileDialog();
-            string fileName = string.Empty;
 
             sdialog.Filter = "CSV File (*.csv)|*.csv";
             if (sdialog.ShowDialog() == true)
             {
-                fileName = sdialog.FileName;
+                _openData.Clear();
+                _fileNameOpen = sdialog.FileName;
                 //1. Read the data file
-                Globals.Log.Info("Reading File: " + fileName);
-                using (var reader = new StreamReader(fileName))
-                using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
-                {
-                    var d = csv.GetRecords<DataModel>();
-                    openData.AddRange(d);
-                }
-                //2. check if there is a corresponding .info file -> in this case there is some block pattern information available
-                string infoFileName = Path.ChangeExtension(fileName, ".info");
-                if (File.Exists(infoFileName) == false)
-                {
-
-                    Globals.Log.Info("No info file available: " + infoFileName);                    
-                }
-                else 
-                {
-                    //a info file is available - read it line by line and extract the necessary information
-                    Globals.Log.Info("Info file available: " + infoFileName);
-                    var lines = File.ReadAllLines(infoFileName);
-                    for (var i = 0; i < lines.Length; i += 1)
-                    {
-                        var line = lines[i];
-                        // Process line
-                    }                    
-                    try
-                    {
-                        int readStimulationRate = Convert.ToInt32(Regex.Match(lines[20], @"\d+").Value);
-                        int readPauseTime = Convert.ToInt32(Regex.Match(lines[30], @"\d+").Value);
-                        int eventDuration = 1000 / readStimulationRate;
-
-                        //change the data set file - adjust the time points and stich the events together
-                        for (int i = 0; i < openData.Count; i += 1)
-                        {
-                            openData[i].TimeInSec = openData[i].TimeInSec + openData[i].EventId * eventDuration + openData[i].BlockId * readPauseTime;
-                        }
-                        
-                    }
-                    catch
-                    {
-                        MessageBox.Show("Wrong file format of info file.", "Error");
-                        Globals.Log.Warn("Wrong info file format.");
-                    }
-                }
-
-                openData.RemoveAll(s => (s.XRawData == 0 || s.YRawData == 0 || s.ZRawData == 0 || s.TempRawData == 0));
-                openData.RemoveAll(s => s.SampleId <= 50);
-                using (TaskDialog dialog = new TaskDialog())
-                {
-                    dialog.WindowTitle = "Open data file";
-                    dialog.MainInstruction = "What do you want to see?";
-                    dialog.Content = "You can chose between the plot of all three different acceleration axes or the absolute acceleration. The absolut value of the acceleration will give you some information about the value, where as the 3-axis plot will show the direction.";                 
-                    dialog.ExpandedInformation = "All plots will show all raw data points without any signal processing except for the first 50 data points of each event which will be deleted to avoid transients. Also, all data points with zero acceleration will be removed for plotting.";
-                    dialog.Footer = "User our Python scripts for detailed data anaylsis. You know who you gonna call...";
-                    dialog.FooterIcon = TaskDialogIcon.Information;
-                    dialog.EnableHyperlinks = true;
-                    TaskDialogButton threeAxes = new TaskDialogButton("3-Axes");
-                    TaskDialogButton absolutValue = new TaskDialogButton("|a| only");                    
-                    dialog.Buttons.Add(absolutValue);
-                    dialog.Buttons.Add(threeAxes);                                       
-                    TaskDialogButton button = dialog.ShowDialog();
-                    if (button == threeAxes)
-                    {
-                        Globals.Log.Info("Plot all three axes.");
-                        //show all three directions
-                        PreparePlot(AccelerationPlotModel, "time in s", "acceleration in m/s^2");
-                        foreach (var d in openData)
-                        {
-                            (AccelerationPlotModel.Series[0] as LineSeries).Points.Add(new DataPoint(d.TimeInSec, d.XAccelerationInMeterPerSecondSquare));
-                            (AccelerationPlotModel.Series[1] as LineSeries).Points.Add(new DataPoint(d.TimeInSec, d.YAccelerationInMeterPerSecondSquare));
-                            (AccelerationPlotModel.Series[2] as LineSeries).Points.Add(new DataPoint(d.TimeInSec, d.ZAccelerationInMeterPerSecondSquare));
-                        }
-                        AccelerationPlotModel.InvalidatePlot(true);
-                    }
-                    else if (button == absolutValue)
-                    {
-                        Globals.Log.Info("Plot absolut value only.");
-
-                        for (int i = 0; i < AccelerationPlotModel.Series.Count; i++)
-                        {
-                            (AccelerationPlotModel.Series[i] as LineSeries).Points.Clear();
-                        }
-                        AccelerationPlotModel.Series.Clear();
-                        AccelerationPlotModel.InvalidatePlot(true);
-
-                        AccelerationPlotModel.Legends.Add(new Legend()
-                        {
-                            LegendTitle = "Direction",
-                            LegendPosition = LegendPosition.LeftBottom
-                        });
-
-                        AccelerationPlotModel.Axes[0].Title = "time in s";
-                        AccelerationPlotModel.Axes[1].Title = "acceleration in m/s^2";
-
-                        AccelerationPlotModel.Series.Add(new LineSeries() { Color = OxyColor.FromRgb(43, 138, 128), Title = "absolut value (|a|)" });
-                        foreach (var d in openData)
-                        {
-                            double abs = d.XAccelerationInMeterPerSecondSquare * d.XAccelerationInMeterPerSecondSquare + d.YAccelerationInMeterPerSecondSquare * d.YAccelerationInMeterPerSecondSquare + d.ZAccelerationInMeterPerSecondSquare * d.ZAccelerationInMeterPerSecondSquare;
-                            abs = Math.Sqrt(abs);
-                            (AccelerationPlotModel.Series[0] as LineSeries).Points.Add(new DataPoint(d.TimeInSec, abs));                           
-                        }
-                        AccelerationPlotModel.InvalidatePlot(true);
-                    }
-                }
-
-
+                Globals.Log.Info("Reading File: " + _fileNameOpen);
                 
-
+                _openProgressDialog.Show();                                
             }
         }
+      
+       
         /// <summary>
         /// When the user has clicked the connect button a dialog apears. In this dialog
         /// the user can select a device from a list and connect to this device or cancel
@@ -513,7 +722,7 @@ namespace Accelera.ViewModels
         /// </summary>
         private void OnConnectButtonClicked()
         {
-            Globals.Log.Info("CONNECT BUTTON CLICKED.");
+            Globals.Log.Wpf("CONNECT BUTTON CLICKED.");
             if (_isRunning == false)
             {
                 ///not data aquistion is running --> show the configuration dialog
@@ -556,7 +765,7 @@ namespace Accelera.ViewModels
         /// </summary>
         private void OnSetupButtonClicked()
         {
-            Globals.Log.Info("SETUP BUTTON CLICKED.");
+            Globals.Log.Wpf("SETUP BUTTON CLICKED.");
             if (_usedDeviceVcp.IsOpen == true) {             
                 _usedDeviceVcp.Port.CloseIt();
                 _usedDeviceVcp.Port.DiscardInBuffer();
@@ -593,7 +802,7 @@ namespace Accelera.ViewModels
         /// </summary>
         private void OnRunFreeButtonClicked() 
         {
-            Globals.Log.Info("RUN FREE BUTTON CLICKED.");
+            Globals.Log.Wpf("RUN FREE BUTTON CLICKED.");
             if (_usedDeviceVcp.IsOpen == false)
             {
                 _usedDeviceVcp.Open(_connectModel.ConnectionString, 921600, System.IO.Ports.Parity.None, 8, System.IO.Ports.StopBits.One);
@@ -607,7 +816,7 @@ namespace Accelera.ViewModels
         }
         private void OnRunAcousticButtonClicked() 
         {
-            Globals.Log.Info("RUN ACOUSTIC BUTTON CLICKED.");
+            Globals.Log.Wpf("RUN ACOUSTIC BUTTON CLICKED.");
             if (_usedDeviceVcp.IsOpen == true)
             {
                 _usedDeviceVcp.Port.CloseIt();
@@ -630,7 +839,7 @@ namespace Accelera.ViewModels
         }
         private void OnRunExtiButtonClicked() 
         {
-            Globals.Log.Info("RUN EXTI BUTTON CLICKED.");
+            Globals.Log.Wpf("RUN EXTI BUTTON CLICKED.");
             _isRunningExternal = true;
             MessageBox.Show("Curiosity kill the cat.", "Do not do that");
             _isRunningExternal = false;            
@@ -643,7 +852,7 @@ namespace Accelera.ViewModels
         /// </summary>
         private void OnStopButtonClicked() 
         {
-             Globals.Log.Info("STOP BUTTON CLICKED.");
+             Globals.Log.Wpf("STOP BUTTON CLICKED.");
             //DAQ in free running mode 0x03 and stop it 0x01
             _usedDeviceVcp.Port.Write(_hw.SetOpMode(0x03, 0x01), 0, hw.TxProtocolLength);
             _usedDeviceVcp.Port.CloseIt();            
@@ -665,7 +874,7 @@ namespace Accelera.ViewModels
 
         private void OnAboutButtonClicked()
         {
-            Globals.Log.Info("ABOUT BUTTON CLICKED.");
+            Globals.Log.Wpf("ABOUT BUTTON CLICKED.");
             AboutDialogView aboutDialog = new AboutDialogView();
             bool? res = aboutDialog.ShowDialog();            
         }
@@ -802,33 +1011,7 @@ namespace Accelera.ViewModels
                 }               
             }
         }        
-        public void PlotData(PlotModel pm, List<Tuple<double, double>> xData, List<Tuple<double, double>> yData, List<Tuple<double, double>> zData)
-        {
-            int Threshold = MinimumDataSizePrioDownsampling / DecimationFactor;
-            IEnumerable<Tuple<double, double>> xInterpolated = LargestTriangleThreeBuckets(xData, Threshold);
-            IEnumerable<Tuple<double, double>> yInterpolated = LargestTriangleThreeBuckets(yData, Threshold);
-            IEnumerable<Tuple<double, double>> zInterpolated = LargestTriangleThreeBuckets(zData, Threshold);
-            foreach (Tuple<double, double> item in xInterpolated)
-            {
-                (pm.Series[0] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
-            }
-            foreach (Tuple<double, double> item in yInterpolated)
-            {
-                (pm.Series[1] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
-            }
-            foreach (Tuple<double, double> item in zInterpolated)
-            {
-                (pm.Series[2] as LineSeries).Points.Add(new DataPoint(item.Item1, item.Item2));
-            }
-
-            if ((pm.Series[0] as LineSeries).Points.Count > MaximumRollover) //show only some last points
-            {
-                (pm.Series[0] as LineSeries).Points.RemoveRange(0, xInterpolated.Count()); //remove first point
-                (pm.Series[1] as LineSeries).Points.RemoveRange(0, yInterpolated.Count()); //remove first point
-                (pm.Series[2] as LineSeries).Points.RemoveRange(0, zInterpolated.Count()); //remove first point
-            }
-            pm.InvalidatePlot(true);
-        }
+        
         /// <summary>
         /// Largest-Triangle-Three Bucket Downsampling. When graphing large sets of data, plotting fewer points but still
         /// representing the data visually can be challenging. Loading 500 vs. 5000 points can help improve load time and
@@ -839,7 +1022,7 @@ namespace Accelera.ViewModels
         /// https://github.com/sveinn-steinarsson
         /// </summary>
         /// <param name="data"></param>
-        /// <param name="threshold"></param>
+        /// <param name="threshold">number of datapoints to be returned</param>
         /// <returns></returns>
         private IEnumerable<Tuple<double, double>> LargestTriangleThreeBuckets(List<Tuple<double, double>> data, int threshold)
         {
