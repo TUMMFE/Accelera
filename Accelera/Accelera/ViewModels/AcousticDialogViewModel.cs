@@ -906,7 +906,7 @@ namespace Accelera.ViewModels
             _canStop = false;
             _canPause = false;
             _canResume = true;
-            _canSave = (_storageData.Count > 0) ? true : false;
+            _canSave = false;
             _canCancel = true;
 
             TimeMarks evtTime = new TimeMarks() { Type = "User Pause", AbsoluteTimeStamp = ((DateTimeOffset)DateTime.UtcNow).ToUnixTimeSeconds() };
@@ -969,7 +969,8 @@ namespace Accelera.ViewModels
                 _singleProgressBlockBackgroundWorker.WorkerSupportsCancellation = true;
                 _singleProgressBlockBackgroundWorker.DoWork += new DoWorkEventHandler(SingleProgressBlockBackgroundWorker);
                 _singleProgressBlockBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(SingleProgressBlockBackgroundWorkerCompleted);
-                RunPeriodicAsync(OnStimulusTick, dueTime, interval, _tsStimulationTimer.Token);                
+                RunPeriodicAsync(OnStimulusTick, dueTime, interval, _tsStimulationTimer.Token);
+                _singleProgressBlockBackgroundWorker.RunWorkerAsync();
             } else
             {
                 _pauseTimer.Resume();
