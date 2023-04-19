@@ -2,9 +2,11 @@
 using CsvHelper;
 using MicroMvvm;
 using Microsoft.Win32;
+using Ookii.Dialogs.Wpf;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Configuration;
 using System.Globalization;
 using System.IO;
@@ -12,12 +14,14 @@ using System.Linq;
 using System.Printing;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Input;
 
 namespace Accelera.ViewModels
 {
     public class SaveAsViewModel : ObservableObject
     {
+      
         #region Private Members   
         /// <summary>
         /// This property is needed to bind the DialogResult of the window. See here for details:
@@ -48,8 +52,17 @@ namespace Accelera.ViewModels
         private bool _canRemovePlaceOfExperiment;
         private bool _canAddNamesOfExaminer;
         private bool _canRemoveNamesOfExaminer;
-        
 
+        private ProgressDialog _saveProgressDialog = new ProgressDialog()
+        {
+            WindowTitle = "Save data",
+            Text = "Saving aquired data on hard disk ...",
+            Description = "Processing...",
+            ShowTimeRemaining = true,
+            CancellationText = "Saving cancled. Datafile not written completly.",
+        };
+        private string _fileNameSave = string.Empty;
+        private bool _dataSavingFinished;
 
         #endregion
 
@@ -89,14 +102,14 @@ namespace Accelera.ViewModels
 
         public string NameOfSubject
         {
-            get => _nameOfSubject; 
+            get => _nameOfSubject;
             set
             {
                 _nameOfSubject = value;
                 RaisePropertyChanged("NameOfSubject");
             }
         }
-        
+
         public string TypeOfExperiment
         {
             get => _typeOfExperiment;
@@ -145,7 +158,7 @@ namespace Accelera.ViewModels
                 RaisePropertyChanged("SelectedTypesOfExperimentsIdx");
             }
         }
-            
+
         public int SelectedPlacesOfExperimentsIdx
         {
             get => _selectedPlacesOfExperimentsIdx;
@@ -165,7 +178,7 @@ namespace Accelera.ViewModels
             }
         }
 
-        #endregion
+        #endregion 
 
         #region Constructors
         public SaveAsViewModel()
@@ -188,12 +201,27 @@ namespace Accelera.ViewModels
             _selectedSexIdx = 0;
             _selectedHandednessIdx = 0;
 
-            Globals.Log.Info("== SaveAsViewModel ==");
+            _saveProgressDialog.DoWork += new DoWorkEventHandler(SaveProgressDialogDoWork);
+            _saveProgressDialog.RunWorkerCompleted += new RunWorkerCompletedEventHandler(SaveProgressDialogCompleted);
+
+            Globals.Log.Wpf("== SaveAsViewModel ==");
         }
         #endregion
 
-        #region Commands
+        #region Relay Commands
         public ICommand SaveButtonClicked { get { return new RelayCommand(OnSaveButtonClicked, CanSaveButtonBeExecuted); } }
+        public ICommand CancelButtonClicked { get { return new RelayCommand(OnCancelButtonClicked, CanCancelButtonBeExecuted); } }
+        public ICommand AddTypeOfExperimentClicked { get { return new RelayCommand(OnAddTypeOfExperimentClicked, CanAddTypeOfExperimentBeExecuted); } }
+        public ICommand DeleteTypeOfExperimentClicked { get { return new RelayCommand(OnDeleteTypeOfExperimentClicked, CanDeleteTypeOfExperimentBeExecuted); } }
+        public ICommand AddPlaceOfExperimentClicked { get { return new RelayCommand(OnAddPlaceOfExperimentClicked, CanAddPlaceOfExperimentBeExecuted); } }
+        public ICommand DeletePlaceOfExperimentClicked { get { return new RelayCommand(OnDeletePlaceOfExperimentClicked, CanDeletePlaceOfExperimentBeExecuted); } }
+        public ICommand AddExaminerClicked { get { return new RelayCommand(OnAddExaminerClicked, CanAddExaminerBeExecuted); } }
+
+        public ICommand DeleteExaminerClicked { get { return new RelayCommand(OnDeleteExaminerClicked, CanDeleteExaminerBeExecuted); } }
+
+        #endregion
+
+        #region Enable Control of Buttons
 
         ///=================================================================================================
         /// <summary>Determine if we can save button be executed.
@@ -210,49 +238,6 @@ namespace Accelera.ViewModels
             return true;
         }
 
-        private void OnSaveButtonClicked()
-        {
-            Globals.Log.Info("Save button clicked.");
-            SaveFileDialog sdialog = new SaveFileDialog();
-            string fileName = string.Empty;
-
-            _configuration.NameOfSubject = _nameOfSubject;
-            _configuration.SexOfSubject = _sex[_selectedSexIdx];
-            _configuration.HandednessOfSubject = _handedness[_selectedHandednessIdx];
-            _configuration.TypeOfExperiment = _typesOfExperiments[_selectedTypesOfExperimentsIdx];
-            _configuration.PlaceOfExperiment = _placesOfExperiments[_selectedPlacesOfExperimentsIdx];
-            _configuration.NameOfExaminer = _namesOfExaminers[_selectedNamesOfExaminersIdx];
-            _configuration.Comments = _comment;
-
-            // safe preference file
-            SystemSettings settings = new SystemSettings();
-            settings.SaveOrCreate(_configuration);
-
-
-            sdialog.Filter = "CSV File (*.csv)|*.csv";
-            if (sdialog.ShowDialog() == true)
-            {
-                fileName = sdialog.FileName;
-                using (var writer = new StreamWriter(fileName))
-                using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
-                {
-                    csv.WriteRecords(StorageData);
-                }
-                //save summary file
-                _configuration.TotalNumberOfAquiredBlocks = ExperimentConfig.TotalNumberOfAquiredBlocks;
-                _configuration.TotalNumberOfAquiredDataFrames = StorageData.Count();
-                _configuration.TotalNumberOfAquiredEvents = StorageData[StorageData.Count() - 1].EventId + 1;
-                _configuration.SetValueSamplesPerDataFrame = ExperimentConfig.NumberOfSamplesPerAcousticStimulus;
-                _configuration.DateTimeOfExperiment = DateTime.Now;
-
-                var infoFile = Path.ChangeExtension(fileName, ".info");
-                _configuration.SaveAsFile(infoFile);
-                DialogResult = true;
-            }
-        }
-
-        public ICommand CancelButtonClicked { get { return new RelayCommand(OnCancelButtonClicked, CanCancelButtonBeExecuted); } }
-
         ///=================================================================================================
         /// <summary>Determine if we can cancel button be executed.
         ///          The cancel button can be used at any time.
@@ -267,14 +252,6 @@ namespace Accelera.ViewModels
         {
             return true;
         }
-
-        private void OnCancelButtonClicked()
-        {
-            Globals.Log.Info("Save As Dialog Cancled");
-            DialogResult = false;
-        }
-
-        public ICommand AddTypeOfExperimentClicked { get { return new RelayCommand(OnAddTypeOfExperimentClicked, CanAddTypeOfExperimentBeExecuted); } }
 
         ///=================================================================================================
         /// <summary>Determine if we can add type of experiment.
@@ -292,23 +269,13 @@ namespace Accelera.ViewModels
             if (_typeOfExperiment == string.Empty)
             {
                 retval = false;
-            } else
+            }
+            else
             {
                 retval = true;
             }
             return retval;
         }
-
-        private void OnAddTypeOfExperimentClicked()
-        {
-            _configuration.TypesOfExperiments.Add(_typeOfExperiment);
-            _typesOfExperiments.Add(_typeOfExperiment);
-            _selectedTypesOfExperimentsIdx = _typesOfExperiments.IndexOf(_typeOfExperiment);
-            SelectedTypesOfExperimentsIdx = _selectedTypesOfExperimentsIdx;
-        }
-
-        public ICommand DeleteTypeOfExperimentClicked { get { return new RelayCommand(OnDeleteTypeOfExperimentClicked, CanDeleteTypeOfExperimentBeExecuted); } }
-
         private bool CanDeleteTypeOfExperimentBeExecuted()
         {
             bool retval;
@@ -322,18 +289,6 @@ namespace Accelera.ViewModels
             }
             return retval;
         }
-    
-        private void OnDeleteTypeOfExperimentClicked()
-        {
-            int del = _selectedTypesOfExperimentsIdx;
-            _configuration.TypesOfExperiments.RemoveAt(del);
-            _typesOfExperiments.RemoveAt(del);
-            _selectedTypesOfExperimentsIdx = -1;
-            SelectedTypesOfExperimentsIdx = _selectedTypesOfExperimentsIdx;
-        }
-
-        public ICommand AddPlaceOfExperimentClicked { get { return new RelayCommand(OnAddPlaceOfExperimentClicked, CanAddPlaceOfExperimentBeExecuted); } }
-
         private bool CanAddPlaceOfExperimentBeExecuted()
         {
             bool retval;
@@ -347,41 +302,19 @@ namespace Accelera.ViewModels
             }
             return retval;
         }
-
-        private void OnAddPlaceOfExperimentClicked()
-        {
-            _configuration.PlacesOfExperiments.Add(_placeOfExperiment);
-            _placesOfExperiments.Add(_placeOfExperiment);
-            _selectedPlacesOfExperimentsIdx = _placesOfExperiments.IndexOf(_placeOfExperiment);
-            SelectedPlacesOfExperimentsIdx = _selectedPlacesOfExperimentsIdx;
-        }
-
-        public ICommand DeletePlaceOfExperimentClicked { get { return new RelayCommand(OnDeletePlaceOfExperimentClicked, CanDeletePlaceOfExperimentBeExecuted); } }
-
         private bool CanDeletePlaceOfExperimentBeExecuted()
         {
             bool retval;
-            if ((_placesOfExperiments.Count == 0) || (_selectedPlacesOfExperimentsIdx == -1))  
+            if ((_placesOfExperiments.Count == 0) || (_selectedPlacesOfExperimentsIdx == -1))
             {
                 retval = false;
-            } else
+            }
+            else
             {
                 retval = true;
             }
             return retval;
         }
-
-        private void OnDeletePlaceOfExperimentClicked()
-        {
-            int del = _selectedPlacesOfExperimentsIdx;
-            _configuration.PlacesOfExperiments.RemoveAt(del);
-            _placesOfExperiments.RemoveAt(del);
-            _selectedPlacesOfExperimentsIdx = -1;
-            SelectedPlacesOfExperimentsIdx = _selectedPlacesOfExperimentsIdx;
-        }
-
-        public ICommand AddExaminerClicked { get { return new RelayCommand(OnAddExaminerClicked, CanAddExaminerBeExecuted); } }
-
         private bool CanAddExaminerBeExecuted()
         {
             bool retval;
@@ -395,17 +328,6 @@ namespace Accelera.ViewModels
             }
             return retval;
         }
-
-        private void OnAddExaminerClicked()
-        {
-            _configuration.NamesOfExaminers.Add(_nameOfExaminer);
-            _namesOfExaminers.Add(_nameOfExaminer);
-            _selectedNamesOfExaminersIdx = _namesOfExaminers.IndexOf(_nameOfExaminer);
-            SelectedNamesOfExaminersIdx = _selectedNamesOfExaminersIdx;
-        }
-
-        public ICommand DeleteExaminerClicked { get { return new RelayCommand(OnDeleteExaminerClicked, CanDeleteExaminerBeExecuted); } }
-
         private bool CanDeleteExaminerBeExecuted()
         {
             bool retval;
@@ -419,6 +341,154 @@ namespace Accelera.ViewModels
             }
             return retval;
         }
+        #endregion
+
+        #region Background Worker Tasks
+        private void SaveProgressDialogDoWork(object sender, DoWorkEventArgs e)
+        {
+            double progress = 0;
+            int percent = 0;
+            int previous = 0;
+
+            using (var writer = new StreamWriter(_fileNameSave))
+            using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+            {
+                csv.WriteHeader<DataModel>();
+                csv.NextRecord();
+                int cnt = 0;
+                foreach (var item in StorageData)
+                {
+                    if (_saveProgressDialog.CancellationPending == true)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+                    else
+                    {
+                        csv.WriteRecord(item);
+                        csv.NextRecord();
+                        cnt++;
+                        progress = cnt / StorageData.Count;
+
+                        percent = (int)(progress * 100.0);
+                        if (percent > previous)
+                        {
+                            // slow down the report progress to see animation bar
+                            _saveProgressDialog.ReportProgress(percent, null, string.Format(System.Globalization.CultureInfo.CurrentCulture, "Processing: {0}%", percent));
+                            previous = percent;
+                        }
+                    }
+                }
+                _dataSavingFinished = true;
+                e.Result = _dataSavingFinished;
+            }
+        }
+        private void SaveProgressDialogCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Cancelled == true)
+            {
+                Globals.Log.Info("Saving data file cancelled.");
+                MessageBox.Show("Saving of data file was cancelled. Data might be corrupt or not complete.", "Information");
+            }
+            else if ((bool)e.Result == _dataSavingFinished)
+            {
+                //save summary file
+                _configuration.TotalNumberOfAquiredBlocks = ExperimentConfig.TotalNumberOfAquiredBlocks;
+                _configuration.TotalNumberOfAquiredDataFrames = StorageData.Count();
+                _configuration.TotalNumberOfAquiredEvents = StorageData[StorageData.Count() - 1].EventId + 1;
+                _configuration.SetValueSamplesPerDataFrame = ExperimentConfig.NumberOfSamplesPerAcousticStimulus;
+                _configuration.DateTimeOfExperiment = DateTime.Now;
+
+                var infoFile = Path.ChangeExtension(_fileNameSave, ".info");
+                _configuration.SaveAsFile(infoFile);
+                
+
+                Globals.Log.Info("Saving data file finished.");
+                MessageBox.Show("Saving of data file finished.", "Information");
+
+                DialogResult = true;
+            }
+
+        }
+        #endregion
+
+        #region Button Clicked Methods
+
+        private void OnSaveButtonClicked()
+        {
+            Globals.Log.Info("Save button clicked.");
+            SaveFileDialog sdialog = new SaveFileDialog();
+
+
+            _configuration.NameOfSubject = _nameOfSubject;
+            _configuration.SexOfSubject = _sex[_selectedSexIdx];
+            _configuration.HandednessOfSubject = _handedness[_selectedHandednessIdx];
+            _configuration.TypeOfExperiment = _typesOfExperiments[_selectedTypesOfExperimentsIdx];
+            _configuration.PlaceOfExperiment = _placesOfExperiments[_selectedPlacesOfExperimentsIdx];
+            _configuration.NameOfExaminer = _namesOfExaminers[_selectedNamesOfExaminersIdx];
+            _configuration.Comments = _comment;
+
+            // safe preference file
+            SystemSettings settings = new SystemSettings();
+            settings.SaveOrCreate(_configuration);
+
+
+            sdialog.Filter = "CSV File (*.csv)|*.csv";
+            if (sdialog.ShowDialog() == true)
+            {
+                _fileNameSave = sdialog.FileName;
+                _saveProgressDialog.Show();                
+            }
+        }
+
+        private void OnCancelButtonClicked()
+        {
+            Globals.Log.Info("Save As Dialog Cancled");
+            DialogResult = false;
+        }
+
+        private void OnAddTypeOfExperimentClicked()
+        {
+            _configuration.TypesOfExperiments.Add(_typeOfExperiment);
+            _typesOfExperiments.Add(_typeOfExperiment);
+            _selectedTypesOfExperimentsIdx = _typesOfExperiments.IndexOf(_typeOfExperiment);
+            SelectedTypesOfExperimentsIdx = _selectedTypesOfExperimentsIdx;
+        }
+
+        private void OnDeleteTypeOfExperimentClicked()
+        {
+            int del = _selectedTypesOfExperimentsIdx;
+            _configuration.TypesOfExperiments.RemoveAt(del);
+            _typesOfExperiments.RemoveAt(del);
+            _selectedTypesOfExperimentsIdx = -1;
+            SelectedTypesOfExperimentsIdx = _selectedTypesOfExperimentsIdx;
+        }
+
+        private void OnAddPlaceOfExperimentClicked()
+        {
+            _configuration.PlacesOfExperiments.Add(_placeOfExperiment);
+            _placesOfExperiments.Add(_placeOfExperiment);
+            _selectedPlacesOfExperimentsIdx = _placesOfExperiments.IndexOf(_placeOfExperiment);
+            SelectedPlacesOfExperimentsIdx = _selectedPlacesOfExperimentsIdx;
+        }
+
+        private void OnDeletePlaceOfExperimentClicked()
+        {
+            int del = _selectedPlacesOfExperimentsIdx;
+            _configuration.PlacesOfExperiments.RemoveAt(del);
+            _placesOfExperiments.RemoveAt(del);
+            _selectedPlacesOfExperimentsIdx = -1;
+            SelectedPlacesOfExperimentsIdx = _selectedPlacesOfExperimentsIdx;
+        }
+
+        private void OnAddExaminerClicked()
+        {
+            _configuration.NamesOfExaminers.Add(_nameOfExaminer);
+            _namesOfExaminers.Add(_nameOfExaminer);
+            _selectedNamesOfExaminersIdx = _namesOfExaminers.IndexOf(_nameOfExaminer);
+            SelectedNamesOfExaminersIdx = _selectedNamesOfExaminersIdx;
+        }
+        
         private void OnDeleteExaminerClicked()
         {
            int del = _selectedNamesOfExaminersIdx;
@@ -427,7 +497,6 @@ namespace Accelera.ViewModels
             _selectedNamesOfExaminersIdx = -1;
             SelectedNamesOfExaminersIdx = _selectedNamesOfExaminersIdx;
         }
-
         #endregion
     }
 }

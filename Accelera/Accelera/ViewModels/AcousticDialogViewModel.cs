@@ -5,6 +5,7 @@ using CsvHelper;
 using MFE.Communication;
 using MicroMvvm;
 using Microsoft.Win32;
+using Ookii.Dialogs.Wpf;
 using OxyPlot;
 using OxyPlot.Axes;
 using OxyPlot.Series;
@@ -53,7 +54,17 @@ namespace Accelera.ViewModels
 
         private DispatcherTimerEx _pauseTimer;
         private long _elapsedPauseTime;
-            
+
+        private ProgressDialog _saveProgressDialog = new ProgressDialog()
+        {
+            WindowTitle = "Save data",
+            Text = "Saving aquired data on hard disk ...",
+            Description = "Processing...",
+            ShowTimeRemaining = true,
+            CancellationText = "Saving cancled. Datafile not written completly.",
+        };
+        private string _fileNameSave = string.Empty;
+        private bool _dataSavingFinished;
 
         private hw _hw;
         private Vcp _usedDeviceVcp;
@@ -270,6 +281,9 @@ namespace Accelera.ViewModels
             AccelerationPlotModel.Series.Add(new LineSeries() { Color = OxyColor.FromRgb(43,138,128), InterpolationAlgorithm = InterpolationAlgorithms.CanonicalSpline });
             PlotAxisFormatting(AccelerationPlotModel, "Acceleration (|a|)", "time in s", "acceleration in m/s^2");
 
+            _saveProgressDialog.DoWork += new DoWorkEventHandler(SaveProgressDialogDoWork);
+            _saveProgressDialog.RunWorkerCompleted += new RunWorkerCompletedEventHandler(SaveProgressDialogCompleted);
+
             Globals.Log.Wpf("== AcousticDialogViewModel ==");
 
 
@@ -457,6 +471,9 @@ namespace Accelera.ViewModels
         public ICommand SaveAsButtonClicked { get { return new RelayCommand(OnSaveAsButtonClicked, CanSaveAsButtonBeExecuted); } }
         public ICommand CancelButtonClicked { get { return new RelayCommand(OnCancelButtonClicked, CanCancelButtonBeExecuted); } }
 
+        #endregion
+
+        #region Enable Control of Buttons
         /// <summary>
         /// Can only start if the system is not already running or is not paused or it is not resumed
         /// </summary>
@@ -509,6 +526,183 @@ namespace Accelera.ViewModels
         {
             return _canCancel;
         }
+        #endregion
+
+        #region Background Worker Tasks
+        private void PauseProgressBackgroundWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Cancelled == true)
+            {
+            }
+            if ((int)e.Result == 15)
+            {
+                CurrentProgressSingleBlock = 0;
+                _counterStimuliBlock = 0;
+                _isStimulationPause = false;
+                _pauseTimer.Stop();
+                _tsStimulationTimer = new CancellationTokenSource();
+                var dueTime = TimeSpan.FromSeconds(0);
+                var interval = TimeSpan.FromSeconds(1000 / _configuration.FrequencyOfAcousticStimulusInMillihertz);
+                RunPeriodicAsync(OnStimulusTick, dueTime, interval, _tsStimulationTimer.Token);
+                _singleProgressBlockBackgroundWorker = new BackgroundWorker();
+                _singleProgressBlockBackgroundWorker.WorkerSupportsCancellation = true;
+                _singleProgressBlockBackgroundWorker.DoWork += new DoWorkEventHandler(SingleProgressBlockBackgroundWorker);
+                _singleProgressBlockBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(SingleProgressBlockBackgroundWorkerCompleted);
+                _singleProgressBlockBackgroundWorker.RunWorkerAsync();
+                CurrentProgressPause = 0;
+            }
+        }
+        private void PauseProgressBackgroundWorker(object sender, DoWorkEventArgs e)
+        {
+            while ((_elapsedPauseTime < _configuration.PauseTimeinSeconds) & (_pauseProgressBackgroundWorker.CancellationPending == false))
+            {
+
+            }
+            if (_pauseProgressBackgroundWorker.CancellationPending == true)
+            {
+                e.Cancel = true;
+                return;
+            }
+            if (_elapsedPauseTime == _configuration.PauseTimeinSeconds)
+            {
+                e.Result = 15;
+            }
+        }
+ 
+        private void SingleProgressBlockBackgroundWorker(object sender, DoWorkEventArgs e)
+        {
+            while ((_counterStimuliBlock < _stimuliPerBlock) & (_counterBlocks < _configuration.BlockRepetitions) & (_singleProgressBlockBackgroundWorker.CancellationPending == false))
+            {
+
+            }
+            if (_singleProgressBlockBackgroundWorker.CancellationPending == true)
+            {
+                e.Cancel = true;
+                return;
+            }
+            if (_counterStimuliBlock == _stimuliPerBlock)
+            {
+                _currentStimulationBlockFinished = true;
+                e.Result = _currentStimulationBlockFinished;
+            }
+        }
+        private void SingleProgressBlockBackgroundWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Cancelled == true)
+            {
+                Globals.Log.Info("Block Backgroundworker canceled." + _counterStimuliBlock.ToString());
+            }
+            else if ((bool)e.Result == _currentStimulationBlockFinished)
+            {
+                _tsStimulationTimer.Cancel();
+                _counterBlocks++;
+                if (_counterBlocks < _configuration.BlockRepetitions)
+                {
+                    CurrentProgressPause = 0;
+                    _isStimulationPause = true;
+                    _pauseTimer = new DispatcherTimerEx();
+                    _pauseTimer.Interval = TimeSpan.FromSeconds(1);
+                    _pauseTimer.Tick += PauseTimerTick;
+                    _elapsedPauseTime = 0;
+
+                    _pauseProgressBackgroundWorker = new BackgroundWorker();
+                    _pauseProgressBackgroundWorker.WorkerSupportsCancellation = true;
+                    _pauseProgressBackgroundWorker.DoWork += new DoWorkEventHandler(PauseProgressBackgroundWorker);
+                    _pauseProgressBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(PauseProgressBackgroundWorkerCompleted);
+                    _pauseProgressBackgroundWorker.RunWorkerAsync();
+                    _pauseTimer.Start();
+                }
+                else
+                {
+                    _canPause = false;
+                    Globals.Log.Info("Acoustic stimulation experiment finished.");
+                    MessageBox.Show("Stimulation protocol finished. Press STOP to finalize the data aquisition.", "Information");
+                }
+            }
+        }
+        private void SaveProgressDialogDoWork(object sender, DoWorkEventArgs e)
+        {
+            double progress = 0;
+            int percent = 0;
+            int previous = 0;
+
+            using (var writer = new StreamWriter(_fileNameSave))
+            using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+            {
+                csv.WriteHeader<DataModel>();
+                csv.NextRecord();
+                int cnt = 0;
+                foreach (var item in _storageData)
+                {
+                    if (_saveProgressDialog.CancellationPending == true)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+                    else
+                    {
+                        csv.WriteRecord(item);
+                        csv.NextRecord();
+                        cnt++;
+                        progress = cnt / _storageData.Count;
+
+                        percent = (int)(progress * 100.0);
+                        if (percent > previous)
+                        {
+                            // slow down the report progress to see animation bar
+                            _saveProgressDialog.ReportProgress(percent, null, string.Format(System.Globalization.CultureInfo.CurrentCulture, "Processing: {0}%", percent));
+                            previous = percent;
+                        }
+                    }
+                }
+                _dataSavingFinished = true;
+                e.Result = _dataSavingFinished;
+            }
+        }
+        private void SaveProgressDialogCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Cancelled == true)
+            {
+                Globals.Log.Info("Saving data file cancelled.");
+                MessageBox.Show("Saving of data file was cancelled. Data might be corrupt or not complete.", "Information");
+            }
+            else if ((bool)e.Result == _dataSavingFinished)
+            {
+                //save summary file
+                _configuration.TotalNumberOfAquiredBlocks = _counterBlocks;
+                _configuration.TotalNumberOfAquiredDataFrames = _storageData.Count();
+                _configuration.TotalNumberOfAquiredEvents = _storageData[_storageData.Count() - 1].EventId + 1;
+                _configuration.SetValueSamplesPerDataFrame = _configuration.NumberOfSamplesPerAcousticStimulus;
+                _configuration.DateTimeOfExperiment = DateTime.Now;
+                var infoFile = Path.ChangeExtension(_fileNameSave, ".info");
+                _configuration.SaveAsFile(infoFile);
+
+                // safe preference file
+                SystemSettings settings = new SystemSettings();
+                settings.SaveOrCreate(_configuration);
+
+                try
+                {
+                    _usedDeviceVcp.Port.CloseIt();
+                    _usedDeviceVcp.Port.DiscardInBuffer();
+                    _usedDeviceVcp.Rxbuffer.Complete();
+                    _usedDeviceVcp.Close();
+                    _usedDeviceVcp.Port.Dispose();
+                    Thread.Sleep(300);
+                }
+                catch 
+                {
+                    Globals.Log.Error("Cannot dispose or close VCP");
+                }
+                Globals.Log.Info("Saving data file finished.");
+                MessageBox.Show("Saving of data file finished.", "Information");
+                DialogResult = true;
+            }        
+
+        }
+        #endregion
+
+        #region Tasks & Timers
         ///=================================================================================================
         /// <summary>Executes a task periodically.</summary>
         ///
@@ -536,6 +730,7 @@ namespace Accelera.ViewModels
                 }
             }
         }
+
         ///=================================================================================================
         /// <summary>Executes the 'stimulus tick' action.
         ///          On every tick the method will start a single shot measurement from the hardware device.
@@ -547,12 +742,23 @@ namespace Accelera.ViewModels
         ///=================================================================================================
         private void OnStimulusTick()
         {
-            _usedDeviceVcp.Port.Write(_hw.SetSamples((short)_configuration.NumberOfSamplesPerAcousticStimulus, true, false), 0, hw.TxProtocolLength);         
+            _usedDeviceVcp.Port.Write(_hw.SetSamples((short)_configuration.NumberOfSamplesPerAcousticStimulus, true, false), 0, hw.TxProtocolLength);
             _counterStimuliBlock++;
             _counterStimuliTotal++;
             CurrentProgressSingleBlock = _counterStimuliBlock;
             CurrentProgressTotal = _counterStimuliTotal;
         }
+
+        private void PauseTimerTick(object sender, EventArgs e)
+        {
+            CurrentProgressPause++;
+            _elapsedPauseTime++;
+        }
+        #endregion
+
+        #region Button Click Methods
+
+       
         ///=================================================================================================
         /// <summary>Executes the 'start button clicked' action.
         ///          The com port will be opened, the _configuration object will be updated from the UI, the
@@ -569,7 +775,7 @@ namespace Accelera.ViewModels
         ///=================================================================================================
         private void OnStartButtonClicked()
         {
-            Globals.Log.Info("START BUTTON CLICKED.");
+            Globals.Log.Wpf("START BUTTON CLICKED.");
             _canStart = false;
             _canStop = true;
             _canPause = true;
@@ -617,102 +823,7 @@ namespace Accelera.ViewModels
             _storageData.Clear();                       //clear the storage list
             RunPeriodicAsync(OnStimulusTick, dueTime, interval, _tsStimulationTimer.Token);               
         }
-        private void PauseProgressBackgroundWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
-        {
-            if (e.Cancelled == true)
-            {
-            }
-            if ((int)e.Result == 15)
-            {                                                
-                CurrentProgressSingleBlock = 0;
-                _counterStimuliBlock = 0;
-                _isStimulationPause = false;
-                _pauseTimer.Stop();
-                _tsStimulationTimer = new CancellationTokenSource();
-                var dueTime = TimeSpan.FromSeconds(0);
-                var interval = TimeSpan.FromSeconds(1000 / _configuration.FrequencyOfAcousticStimulusInMillihertz);
-                RunPeriodicAsync(OnStimulusTick, dueTime, interval, _tsStimulationTimer.Token);
-                _singleProgressBlockBackgroundWorker = new BackgroundWorker();
-                _singleProgressBlockBackgroundWorker.WorkerSupportsCancellation = true;
-                _singleProgressBlockBackgroundWorker.DoWork += new DoWorkEventHandler(SingleProgressBlockBackgroundWorker);
-                _singleProgressBlockBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(SingleProgressBlockBackgroundWorkerCompleted);
-                _singleProgressBlockBackgroundWorker.RunWorkerAsync();
-                CurrentProgressPause = 0;
-            }
-        }
-        private void PauseProgressBackgroundWorker(object sender, DoWorkEventArgs e)
-        {
-            while ((_elapsedPauseTime < _configuration.PauseTimeinSeconds) & (_pauseProgressBackgroundWorker.CancellationPending == false))
-            {
-
-            }
-            if (_pauseProgressBackgroundWorker.CancellationPending == true)
-            {
-                e.Cancel = true;
-                return;
-            }
-            if (_elapsedPauseTime == _configuration.PauseTimeinSeconds)
-            {
-                e.Result = 15;
-            }            
-        }
-        private void PauseTimerTick(object sender, EventArgs e)
-        {
-            CurrentProgressPause++;
-            _elapsedPauseTime++;
-        }
         
-        private void SingleProgressBlockBackgroundWorker(object sender, DoWorkEventArgs e)
-        {
-            while ((_counterStimuliBlock < _stimuliPerBlock) & (_counterBlocks < _configuration.BlockRepetitions) & (_singleProgressBlockBackgroundWorker.CancellationPending == false))
-            {
-                               
-            }
-            if (_singleProgressBlockBackgroundWorker.CancellationPending == true)
-            {                
-                e.Cancel = true;
-                return;
-            } 
-            if (_counterStimuliBlock == _stimuliPerBlock) 
-            {
-                _currentStimulationBlockFinished = true;
-                e.Result = _currentStimulationBlockFinished;
-            }           
-        }
-        private void SingleProgressBlockBackgroundWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
-        {            
-            if (e.Cancelled == true)
-            {
-                Globals.Log.Info("Block Backgroundworker canceled." + _counterStimuliBlock.ToString());
-            }
-            else if ((bool)e.Result == _currentStimulationBlockFinished)
-            {
-                _tsStimulationTimer.Cancel();
-                _counterBlocks++;
-                if (_counterBlocks < _configuration.BlockRepetitions)
-                {                                        
-                    CurrentProgressPause = 0;
-                    _isStimulationPause = true;
-                    _pauseTimer = new DispatcherTimerEx();
-                    _pauseTimer.Interval = TimeSpan.FromSeconds(1);
-                    _pauseTimer.Tick += PauseTimerTick;
-                    _elapsedPauseTime = 0;
-
-                    _pauseProgressBackgroundWorker = new BackgroundWorker();
-                    _pauseProgressBackgroundWorker.WorkerSupportsCancellation = true;
-                    _pauseProgressBackgroundWorker.DoWork += new DoWorkEventHandler(PauseProgressBackgroundWorker);
-                    _pauseProgressBackgroundWorker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(PauseProgressBackgroundWorkerCompleted);
-                    _pauseProgressBackgroundWorker.RunWorkerAsync();
-                    _pauseTimer.Start();
-                } else
-                {
-                    _canPause = false;                   
-                    Globals.Log.Info("Acoustic stimulation experiment finished.");
-                    MessageBox.Show("Stimulation protocol finished. Press STOP to finalize the data aquisition.", "Information");
-                }
-            }
-        }
-
         ///=================================================================================================
         /// <summary>Executes the 'stop button clicked' action.
         ///          The method will cancel all tasks like
@@ -724,9 +835,9 @@ namespace Accelera.ViewModels
         ///
         /// <remarks>Bernhard Gleich, 09.04.2023.</remarks>
         ///=================================================================================================
-        private async void OnStopButtonClicked()
+        private void OnStopButtonClicked()
         {
-            Globals.Log.Info("STOP BUTTON CLICKED.");
+            Globals.Log.Wpf("STOP BUTTON CLICKED.");
             _canStart = true;
             _canStop = false;
             _canPause = false;
@@ -773,7 +884,7 @@ namespace Accelera.ViewModels
         ///=================================================================================================
         private void OnPauseButtonClicked()
         {
-            Globals.Log.Info("PAUSE BUTTON CLICKED.");
+            Globals.Log.Wpf("PAUSE BUTTON CLICKED.");
             _canStart = false;
             _canStop = false;
             _canPause = false;
@@ -814,7 +925,7 @@ namespace Accelera.ViewModels
         ///=================================================================================================
         private void OnResumeButtonClicked()
         {
-            Globals.Log.Info("RESUME BUTTON CLICKED.");
+            Globals.Log.Wpf("RESUME BUTTON CLICKED.");
             _canStart = false;
             _canStop = true;
             _canPause = true;
@@ -856,9 +967,8 @@ namespace Accelera.ViewModels
         private void OnSaveButtonClicked()
         {
             //show save as dialog
-            Globals.Log.Info("SAVE BUTTON CLICKED.");
+            Globals.Log.Wpf("SAVE BUTTON CLICKED.");
             SaveFileDialog sdialog = new SaveFileDialog();
-            string fileName = string.Empty;
 
             //link blockId in storage data to each record.
 
@@ -876,42 +986,13 @@ namespace Accelera.ViewModels
             sdialog.Filter = "CSV File (*.csv)|*.csv";
             if (sdialog.ShowDialog() == true)
             {
-                fileName = sdialog.FileName;
-                using (var writer = new StreamWriter(fileName))
-                using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
-                {
-                    csv.WriteRecords(_storageData);
-                }
-
-                //save summary file
-                _configuration.TotalNumberOfAquiredBlocks = _counterBlocks;
-                _configuration.TotalNumberOfAquiredDataFrames = _storageData.Count();
-                _configuration.TotalNumberOfAquiredEvents = _storageData[_storageData.Count()-1].EventId+1;
-                _configuration.SetValueSamplesPerDataFrame = _configuration.NumberOfSamplesPerAcousticStimulus;
-                _configuration.DateTimeOfExperiment = DateTime.Now;
-                var infoFile = Path.ChangeExtension(fileName, ".info");
-                _configuration.SaveAsFile(infoFile);
-
-                // safe preference file
-                SystemSettings settings = new SystemSettings();
-                settings.SaveOrCreate(_configuration);
-
-                try
-                {
-                    _usedDeviceVcp.Port.CloseIt();
-                    _usedDeviceVcp.Port.DiscardInBuffer();
-                    _usedDeviceVcp.Rxbuffer.Complete();
-                    _usedDeviceVcp.Close();
-                    _usedDeviceVcp.Port.Dispose();
-                    Thread.Sleep(300);
-                }
-                catch { }
-                DialogResult = true;
-                }
+                _fileNameSave = sdialog.FileName;
+                _saveProgressDialog.Show();
+            }
         }
         private void OnSaveAsButtonClicked()
         {
-            Globals.Log.Info("SAVE AS BUTTON CLICKED.");
+            Globals.Log.Wpf("SAVE AS BUTTON CLICKED.");
             
 
             //link blockId in storage data to each record.
@@ -947,19 +1028,19 @@ namespace Accelera.ViewModels
             }
         }
 
-            ///=================================================================================================
-            /// <summary>Executes the 'cancel button clicked' action.
-            ///          Cancel button was clicked. The data will disgarded,
-            ///          the window will be closed without writing any data to the device,
-            ///          the preference file or aquired data. Thread
-            ///          will be set to sleep for 300 ms due to some issues when disposing a COM
-            ///          port object.</summary>
-            ///
-            /// <remarks>Bernhard Gleich, 09.04.2023.</remarks>
-            ///=================================================================================================
-            private void OnCancelButtonClicked()
-             {
-            Globals.Log.Info("CANCEL BUTTON CLICKED.");
+        ///=================================================================================================
+        /// <summary>Executes the 'cancel button clicked' action.
+        ///          Cancel button was clicked. The data will disgarded,
+        ///          the window will be closed without writing any data to the device,
+        ///          the preference file or aquired data. Thread
+        ///          will be set to sleep for 300 ms due to some issues when disposing a COM
+        ///          port object.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 09.04.2023.</remarks>
+        ///=================================================================================================
+        private void OnCancelButtonClicked()
+        {
+            Globals.Log.Wpf("CANCEL BUTTON CLICKED.");
             try
             {
                 if (_usedDeviceVcp.IsOpen == true)
