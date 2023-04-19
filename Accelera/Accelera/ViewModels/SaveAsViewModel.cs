@@ -59,7 +59,7 @@ namespace Accelera.ViewModels
             Text = "Saving aquired data on hard disk ...",
             Description = "Processing...",
             ShowTimeRemaining = true,
-            CancellationText = "Saving cancled. Datafile not written completly.",
+            CancellationText = "Saving canceled. Datafile not written completly.",
         };
         private string _fileNameSave = string.Empty;
         private bool _dataSavingFinished;

@@ -34,11 +34,11 @@ namespace Accelera.ViewModels
     {
 
         #region Constants
-        public const int InvalidatePlotEveryNthValue = 200;
-        public const int MaximumRollover = 1000;
-        public const int DecimationFactor = 10;
-        public const int MinimumDataSizePrioDownsampling = 100;
-        public const int MaximumDataPlotOffline = 40000;
+        public const int MaximumRollover = 1000; //maximum value at which plot rollover will occur. Rollover will generate the illusion of moving time axis.
+        public const int DecimationFactor = 10;  //this decimation factor is used only in the data aquisition modes
+        public const int MinimumDataSizePrioDecimation = 100; //decimation will start when more data than this value is available
+        public const int MaximumDataPlotOffline = 40000; //this is only used when loading large data sets from the disk to improve performance
+        private const int DisposeFirstDataFrameNumbers = 50; //number of data frames which will be thrown away when stiching block wise data together
         #endregion
 
         #region Private Members       
@@ -58,7 +58,7 @@ namespace Accelera.ViewModels
             Text = "Saving aquired data on hard disk ...",
             Description = "Processing...",
             ShowTimeRemaining = true,            
-            CancellationText = "Saving cancled. Datafile not written completly.",
+            CancellationText = "Saving canceled. Datafile not written completly.",
         };
 
         private ProgressDialog _openProgressDialog = new ProgressDialog()
@@ -67,7 +67,7 @@ namespace Accelera.ViewModels
             Text = "Loading data from disk ...",
             Description = "Processing...",
             ShowTimeRemaining = true,
-            CancellationText = "Loading cancled. Datafile will not be shown.",
+            CancellationText = "Loading canceled. Datafile will not be shown.",
         };
         private string _fileNameSave = string.Empty;
         private string _fileNameOpen = string.Empty;
@@ -91,10 +91,13 @@ namespace Accelera.ViewModels
 
         #region Constructors
 
-        /// <summary>
-        /// Constructor of the view model. The constructor will init all plot models, all UI control flags 
-        /// and will init a standard configuration for settings.
-        /// </summary>
+        ///=================================================================================================
+        /// <summary>Constructor of the view model. The constructor will init all plot models, all UI
+        /// control flags and will init a standard configuration for settings.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///=================================================================================================
+
         public MainWindowViewModel()
         {
             //This will break strict MVVM pattern but other solutions seems to be more complicated
@@ -139,11 +142,16 @@ namespace Accelera.ViewModels
 
         #region Member Methods
 
-        /// <summary>
-        /// This method will be executed when the OnClosing event happen although it breaks the strict MVVM pattern. 
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
+        ///=================================================================================================
+        /// <summary>This method will be executed when the OnClosing event happen although it breaks the
+        /// strict MVVM pattern.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="sender">.</param>
+        /// <param name="e">     .</param>
+        ///=================================================================================================
+
         void MainWindow_Closing(object sender, CancelEventArgs e)
         {
             //If your app is a "portable app" without an installer, consider calling this method upon app
@@ -156,13 +164,17 @@ namespace Accelera.ViewModels
             Globals.Log.Info("Application closed.");
         }
 
-        /// <summary>
-        /// Draw, axis, grid lines, labels and titels of a plot model.
-        /// </summary>
-        /// <param name="pm">Plotmodel to be modified</param>
-        /// <param name="title">Title of the plot</param>
-        /// <param name="xaxis">Label for the x-axis</param>
-        /// <param name="yaxis">Label for the y-axis</param>
+        ///=================================================================================================
+        /// <summary>Draw, axis, grid lines, labels and titels of a plot model.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="pm">   Plotmodel to be modified.</param>
+        /// <param name="title">Title of the plot.</param>
+        /// <param name="xaxis">Label for the x-axis.</param>
+        /// <param name="yaxis">Label for the y-axis.</param>
+        ///=================================================================================================
+
         private void PlotAxisFormatting(PlotModel pm, string title, string xaxis, string yaxis)
         {
             pm.Title = title;
@@ -179,11 +191,13 @@ namespace Accelera.ViewModels
             valueAxis.Title = yaxis;
             pm.Axes.Add(valueAxis);
         }
-       
 
-        /// <summary>
-        /// Send the system configuration and the experimental setup data from the settings panel.
-        /// </summary>
+        ///=================================================================================================
+        /// <summary>Send the system configuration and the experimental setup data from the settings panel.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///=================================================================================================
+
         private void SendSystemConfiguration()
         {
             if (_usedDeviceVcp.IsOpen == false)
@@ -236,10 +250,14 @@ namespace Accelera.ViewModels
 
 
         }
-        /// <summary>
-        /// Prepare the plot panels for the free running data aquisition and send the 
-        /// start command to the device. 
-        /// </summary>
+
+        ///=================================================================================================
+        /// <summary>Prepare the plot panels for the free running data aquisition and send the start
+        /// command to the device.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///=================================================================================================
+
         private void PrepareFreeRunningDataAquisition()
         {
             _ts = new CancellationTokenSource();
@@ -254,6 +272,19 @@ namespace Accelera.ViewModels
             //DAQ in free running mode 0x03 and start it 0x00
             _usedDeviceVcp.Port.Write(_hw.SetOpMode(0x03, 0x00), 0, hw.TxProtocolLength);
         }
+
+        ///=================================================================================================
+        /// <summary>Prepare plot.
+        ///          This method will remove all previous data series, add the legends and three new data 
+        ///          series for the three acceleration directions. The method will add the labes for the 
+        ///          two axes of the plot.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="pm">   Plotmodel to be modified.</param>
+        /// <param name="xaxis">Label for the x-axis.</param>
+        /// <param name="yaxis">Label for the y-axis.</param>
+        ///=================================================================================================
 
         private void PreparePlot(PlotModel pm, string xaxis, string yaxis)
         {
@@ -278,19 +309,41 @@ namespace Accelera.ViewModels
             pm.Axes[1].Title = yaxis;
         }
 
-        /// <summary>
-        /// Producer thread to collect the received and converted raw data.
-        /// </summary>
-        /// <param name="target"></param>
-        /// <param name="e"></param>
+        ///=================================================================================================
+        /// <summary>Producer thread to collect the received and converted raw data.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="target">.</param>
+        /// <param name="data">  data set which should be plotted.</param>
+        ///
+        /// ### <param name="e">.</param>
+        ///=================================================================================================
+
         private void Produce(ITargetBlock<DataModel> target, DataModel data)
         {
             target.Post(data);
         }
 
+        ///=================================================================================================
+        /// <summary>Plot data.
+        ///          The method is used in free running mode only. The method will be called by the
+        ///          'SignalProcessingTask'. The method will interpolate and decimate the data using
+        ///          'LargestTriangleThreeBuckets' method, add the data points to the corresponding
+        ///          series. In case of a rollover, the previous data will be removed from the plot 
+        ///          series and finally the plot will be invalidted. </summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="pm">   Plotmodel to be modified.</param>
+        /// <param name="xData">The data.</param>
+        /// <param name="yData">The data.</param>
+        /// <param name="zData">The data.</param>
+        ///=================================================================================================
+
         public void PlotData(PlotModel pm, List<Tuple<double, double>> xData, List<Tuple<double, double>> yData, List<Tuple<double, double>> zData)
         {
-            int Threshold = MinimumDataSizePrioDownsampling / DecimationFactor;
+            int Threshold = MinimumDataSizePrioDecimation / DecimationFactor;
             IEnumerable<Tuple<double, double>> xInterpolated = LargestTriangleThreeBuckets(xData, Threshold);
             IEnumerable<Tuple<double, double>> yInterpolated = LargestTriangleThreeBuckets(yData, Threshold);
             IEnumerable<Tuple<double, double>> zInterpolated = LargestTriangleThreeBuckets(zData, Threshold);
@@ -316,7 +369,22 @@ namespace Accelera.ViewModels
             pm.InvalidatePlot(true);
         }
 
-        private void ReadInformationFile()
+        ///=================================================================================================
+        /// <summary>Reads additional information.
+        ///          Check if the *.info file exists. If the file exists read all necessary information to
+        ///          convert the time vector (which is event wise saved in the data file, which means that
+        ///          it will start at zero for each event) into a continous time vector with increasing
+        ///          times. Thus, a full plot with all pauses and events can be plotted. The method will 
+        ///          also call 'ReadTimestampFile' to get pause times. The method will remove all data 
+        ///          frames where the raw values of x,y,z acceleration are 0. Before stiching the method 
+        ///          will throw the first 'DisposeFirstDataFrameNumbers' data frames away (to avoid some
+        ///          transients).
+        ///          </summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///=================================================================================================
+
+        private void ReadAdditonalInformation()
         {
             string infoFileName = Path.ChangeExtension(_fileNameOpen, ".info");
             if (File.Exists(infoFileName) == false)
@@ -336,10 +404,18 @@ namespace Accelera.ViewModels
                 }
                 try
                 {
+                    _openData.RemoveAll(s => s.SampleId <= DisposeFirstDataFrameNumbers);
+                    List<TimeMarks> tm = new List<TimeMarks>();
+                    tm = ReadTimestampFile();
+                    if (tm.Count > 0)
+                    {
+                        //todo: convert time axis to a continous time frame. Stich all together.
+                    }
+
                     int readStimulationRate = Convert.ToInt32(Regex.Match(lines[20], @"\d+").Value);
                     int readPauseTime = Convert.ToInt32(Regex.Match(lines[30], @"\d+").Value);
                     int eventDuration = 1000 / readStimulationRate;
-                    _openData.RemoveAll(s => s.SampleId <= 50);
+                    
                     //change the data set file - adjust the time points and stich the events together
                     for (int i = 0; i < _openData.Count; i += 1)
                     {
@@ -359,7 +435,48 @@ namespace Accelera.ViewModels
         }
 
         ///=================================================================================================
-        /// <summary>Decimate and plot data file.</summary>
+        /// <summary>Reads time stamp file.
+        ///          Check if the *.time file exists. If the file exists read the content into a list object
+        ///          of type TimeMark.
+        ///          </summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>A list of time marks, which will be used to convert the time vector of the data
+        ///          file into a continous time frame to see all pauses, block and events when plotting
+        ///          the data.
+        ///          </returns>
+        ///=================================================================================================
+
+        private List<TimeMarks> ReadTimestampFile()
+        {
+            List<TimeMarks> timeMarks = new List<TimeMarks>();
+            string timestepsFileName = Path.ChangeExtension(_fileNameOpen, ".time");
+            if (File.Exists(timestepsFileName) == false)
+            {
+
+                Globals.Log.Info("No time vector file available: " + timestepsFileName);
+            }
+            else
+            {
+                using (var reader = new StreamReader(timestepsFileName))
+                using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
+                {
+                    var records = csv.GetRecords<TimeMarks>();
+                    timeMarks.AddRange(records);
+                }
+            }
+            return timeMarks;
+        }
+
+        ///=================================================================================================
+        /// <summary>Decimate and plot data file.
+        ///          The method creats lists of data tuples for the interpolation method 
+        ///          ('LargestTriangleThreeBuckets') and calculates the absolute value of the acceleration
+        ///          as well. The method will set the labeling of the axes (depending on which data to be 
+        ///          ploted), add the line series to the plot model and finally will add the data points
+        ///          to the corresponding series. 
+        ///          At the end the method will invalidate the plotmodel.</summary>
         ///
         /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
         ///
@@ -444,6 +561,16 @@ namespace Accelera.ViewModels
             }
             AccelerationPlotModel.InvalidatePlot(true);
         }
+
+        ///=================================================================================================
+        /// <summary>Plot existing data.
+        ///          This method is used for plotting the loaded data. It will open a dialog window in which
+        ///          the use can chose either to plot all 3-directions or only the absolut value of the 
+        ///          acceleration. The method will call the 'DecimateAndPlotDataFile' method which does all
+        ///          the plotting.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///=================================================================================================
 
         private void PlotExistingData()
         {
@@ -661,7 +788,7 @@ namespace Accelera.ViewModels
             }
             else
             {
-                ReadInformationFile();
+                ReadAdditonalInformation();                
                 PlotExistingData();
             }
         }
@@ -964,7 +1091,7 @@ namespace Accelera.ViewModels
         /// into data tuples and store each tuple in a list object. The data will also be stored in the 
         /// "_storageData" List for the possibility of saving the data to the disk.
         /// Once there are enough data points in the list (the number is defined by the constant value
-        /// "MinimumDataSizePrioDownsampling" the method will invalidate the plots and redraw them. After 
+        /// "MinimumDataSizePrioDecimation" the method will invalidate the plots and redraw them. After 
         /// this, the tuple lists will be cleared again for the next bunch of data sets.
         /// </summary>
         /// <returns></returns>
@@ -1001,7 +1128,7 @@ namespace Accelera.ViewModels
 
                 counter++;
 
-               if (counter % MinimumDataSizePrioDownsampling == 0)
+               if (counter % MinimumDataSizePrioDecimation == 0)
                 {
                     PlotData(AccelerationPlotModel, tupleListX, tupleListY, tupleListZ);
                     tupleListX.Clear();

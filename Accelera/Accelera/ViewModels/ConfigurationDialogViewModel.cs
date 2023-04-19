@@ -732,7 +732,7 @@ namespace Accelera.ViewModels
         /// into data tuples and store each tuple in a list object. The data will also be stored in the 
         /// "_storageData" List for the possibility of saving the data to the disk.
         /// Once there are enough data points in the list (the number is defined by the constant value
-        /// "MinimumDataSizePrioDownsampling" the method will invalidate the plots and redraw them. After 
+        /// "MinimumDataSizePrioDecimation" the method will invalidate the plots and redraw them. After 
         /// this, the tuple lists will be cleared again for the next bunch of data sets.
         /// </summary>
         /// <returns></returns>

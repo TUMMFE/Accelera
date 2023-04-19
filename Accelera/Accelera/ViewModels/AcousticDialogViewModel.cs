@@ -28,6 +28,13 @@ namespace Accelera.ViewModels
 {
     public class AcousticDialogViewModel : ObservableObject
     {
+        enum BackgroundWorkerResults
+        {
+            PauseTimerFinished,
+            StimulationBlockFinished,
+            DataSavingFinished
+
+        }
         #region Constants   
         public const int InvalidatePlotEveryNthValue = 1000;
         public const int MaximumRollover = 1000;
@@ -61,7 +68,7 @@ namespace Accelera.ViewModels
             Text = "Saving aquired data on hard disk ...",
             Description = "Processing...",
             ShowTimeRemaining = true,
-            CancellationText = "Saving cancled. Datafile not written completly.",
+            CancellationText = "Saving canceled. Datafile not written completly.",
         };
         private string _fileNameSave = string.Empty;
         private bool _dataSavingFinished;
@@ -107,9 +114,6 @@ namespace Accelera.ViewModels
         private int _counterStimuliBlock;
         private int _counterStimuliTotal;
         private int _counterBlocks;        
-
-        
-
         #endregion
 
         #region Public Members
@@ -325,24 +329,18 @@ namespace Accelera.ViewModels
             _progressBarPauseMax = _pauseDuration;
             ProgressBarPauseMax = _progressBarPauseMax;
         }   
-        /// <summary>
-        /// Load the settings from the settings file. If this file does not exist, 
-        /// than generate a standard setting file. 
-        /// If the folder does not exist, the method will try to create this folder. 
-        /// If the folder could not be created, the application will be terminated.
-        /// </summary>
-        private void CheckApplicationFiles()
-        {
-            SystemSettings systemSettings = new SystemSettings();
-            _configuration = systemSettings.LoadOrCreate();            
-        }
-        /// <summary>
-        /// Draw, axis, grid lines, labels and titels of a plot model.
-        /// </summary>
-        /// <param name="pm">Plotmodel to be modified</param>
-        /// <param name="title">Title of the plot</param>
-        /// <param name="xaxis">Label for the x-axis</param>
-        /// <param name="yaxis">Label for the y-axis</param>
+
+        ///=================================================================================================
+        /// <summary>Draw, axis, grid lines, labels and titels of a plot model.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="pm">   Plotmodel to be modified.</param>
+        /// <param name="title">Title of the plot.</param>
+        /// <param name="xaxis">Label for the x-axis.</param>
+        /// <param name="yaxis">Label for the y-axis.</param>
+        ///=================================================================================================
+
         private void PlotAxisFormatting(PlotModel pm, string title, string xaxis, string yaxis)
         {
             pm.Title = title;
@@ -359,13 +357,19 @@ namespace Accelera.ViewModels
             valueAxis.Title = yaxis;
             pm.Axes.Add(valueAxis);
         }
-        /// <summary>
-        /// Prepare the plot for data aquisistion. Clears all data points and set all colors. 
-        /// For performance issues, the data is ploted as is without cubic spline interpolation.
-        /// </summary>
-        /// <param name="pm">Plot Model</param>
-        /// <param name="xaxis">Label for the x-axis</param>
-        /// <param name="yaxis">Label for the y-axis</param>
+
+        ///=================================================================================================
+        /// <summary>Prepare the plot for data aquisistion. Clears all data points and set all colors. For
+        /// performance issues, the data is ploted as is without cubic spline interpolation.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="pm">   Plot Model.</param>
+        /// <param name="color">The color.</param>
+        /// <param name="xaxis">Label for the x-axis.</param>
+        /// <param name="yaxis">Label for the y-axis.</param>
+        ///=================================================================================================
+
         private void ClearPlotSeries(PlotModel pm, OxyColor color, string xaxis, string yaxis)
         {
             (pm.Series[0] as LineSeries).Points.Clear();
@@ -376,15 +380,20 @@ namespace Accelera.ViewModels
             pm.Axes[0].Title = xaxis;
             pm.Axes[1].Title = yaxis;
         }
-        /// <summary>
-        /// Use the list of data tuples and perform interpolation and decimation. Add 
-        /// the filtered data tuples to the plot series. Afterwards redraw the plot.
-        /// </summary>
-        /// <param name="pm">The plotmodel</param>
-        /// <param name="dataTuples">list of data tuples</param>
+
+        ///=================================================================================================
+        /// <summary>Use the list of data tuples and perform interpolation and decimation. Add the
+        /// filtered data tuples to the plot series. Afterwards redraw the plot.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="pm">        The plotmodel.</param>
+        /// <param name="dataTuples">list of data tuples.</param>
+        ///=================================================================================================
+
         private void DrawPoints(PlotModel pm, List<Tuple<double, double>> dataTuples)
         {
-            int Threshold = _configuration.NumberOfSamplesPerAcousticStimulus  / DecimationFactor; //MinimumDataSizePrioDownsampling
+            int Threshold = _configuration.NumberOfSamplesPerAcousticStimulus  / DecimationFactor; //MinimumDataSizePrioDecimation
             (pm.Series[0] as LineSeries).Points.Clear();
             IEnumerable<Tuple<double, double>> interpolatedData = LargestTriangleThreeBuckets(dataTuples, Threshold);
          
@@ -397,24 +406,32 @@ namespace Accelera.ViewModels
             
 
         }
-        /// <summary>
-        /// Producer thread to collect the received and converted raw data.
-        /// </summary>
-        /// <param name="target"></param>
-        /// <param name="e"></param>
+
+        ///=================================================================================================
+        /// <summary>Producer thread to collect the received and converted raw data.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="target">.</param>
+        /// <param name="data">  .</param>
+        ///
+        /// ### <param name="e">.</param>
+        ///=================================================================================================
+
         private void Produce(ITargetBlock<DataModel> target, DataModel data)
         {
             target.Post(data);
         }
+
         ///=================================================================================================
-        /// <summary>Prepare data aquisition.
-        ///          the cancellation token for the data Rx thread will be generated, the plot panels will
-        ///          be initialized with title, colors, axis labels. The com port will be cleared and 
-        ///          the Rx buffers will be completed. The com port will be opened and but into the 
-        ///          listening mode.</summary>
+        /// <summary>Prepare data aquisition. the cancellation token for the data Rx thread will be
+        /// generated, the plot panels will be initialized with title, colors, axis labels. The com port
+        /// will be cleared and the Rx buffers will be completed. The com port will be opened and but
+        /// into the listening mode.</summary>
         ///
         /// <remarks>Bernhard Gleich, 09.04.2023.</remarks>
         ///=================================================================================================
+
         private void PrepareDataAquisition()
         {
             _ts = new CancellationTokenSource();
@@ -474,54 +491,94 @@ namespace Accelera.ViewModels
         #endregion
 
         #region Enable Control of Buttons
-        /// <summary>
-        /// Can only start if the system is not already running or is not paused or it is not resumed
-        /// </summary>
-        /// <returns></returns>
+
+        ///=================================================================================================
+        /// <summary>Can only start if the system is not already running or is not paused or it is not
+        /// resumed.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>True if we can start button be executed, false if not.</returns>
+        ///=================================================================================================
+
         bool CanStartButtonBeExecuted()
         {            
             return _canStart;
         }
-        /// <summary>
-        /// Stop is possible if the system is running or resumed
-        /// </summary>
-        /// <returns></returns>
+
+        ///=================================================================================================
+        /// <summary>Stop is possible if the system is running or resumed.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>True if we can stop button be executed, false if not.</returns>
+        ///=================================================================================================
+
         bool CanStopButtonBeExecuted()
         {
             return _canStop; 
         }
-        /// <summary>
-        /// Pause is possible if the system is running or resumed
-        /// </summary>
-        /// <returns></returns>
+
+        ///=================================================================================================
+        /// <summary>Pause is possible if the system is running or resumed.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>True if we can pause button be executed, false if not.</returns>
+        ///=================================================================================================
+
         bool CanPauseButtonBeExecuted()
         {
             return _canPause;
         }
-        /// <summary>
-        /// Resume is possible if the system is paused
-        /// </summary>
-        /// <returns></returns>
+
+        ///=================================================================================================
+        /// <summary>Resume is possible if the system is paused.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>True if we can resume button be executed, false if not.</returns>
+        ///=================================================================================================
+
         bool CanResumeButtonBeExecuted()
         {
             return _canResume;
         }
-        /// <summary>
-        /// Save is possible if the system is finished
-        /// </summary>
-        /// <returns></returns>
+
+        ///=================================================================================================
+        /// <summary>Save is possible if the system is finished.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>True if we can save button be executed, false if not.</returns>
+        ///=================================================================================================
+
         bool CanSaveButtonBeExecuted()
         {
             return _canSave;
         }
+
+        ///=================================================================================================
+        /// <summary>Determine if we can save as button be executed.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>True if we can save as button be executed, false if not.</returns>
+        ///=================================================================================================
+
         bool CanSaveAsButtonBeExecuted()
         {
             return _canSave;
         }
-        /// <summary>
-        /// Cancel is possible if the system is paused or finished
-        /// </summary>
-        /// <returns></returns>
+
+        ///=================================================================================================
+        /// <summary>Cancel is possible if the system is paused or finished.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>True if we can cancel button be executed, false if not.</returns>
+        ///=================================================================================================
+
         bool CanCancelButtonBeExecuted()
         {
             return _canCancel;
@@ -529,12 +586,27 @@ namespace Accelera.ViewModels
         #endregion
 
         #region Background Worker Tasks
+
+        ///=================================================================================================
+        /// <summary>Pause progress background worker completed.
+        ///          The method is called when the pause timer (background worker task) has completed.
+        ///          Once, the timer is completed, the method will start the stimulus timer and the 
+        ///          '_singleProgressBlockBackgroundWorker' timer again. The progress bar for the pause 
+        ///          will be reseted as well.
+        ///          </summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="sender">Source of the event.</param>
+        /// <param name="e">     Run worker completed event information.</param>
+        ///=================================================================================================
+
         private void PauseProgressBackgroundWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
             if (e.Cancelled == true)
             {
             }
-            if ((int)e.Result == 15)
+            if ((BackgroundWorkerResults)e.Result == BackgroundWorkerResults.PauseTimerFinished)
             {
                 CurrentProgressSingleBlock = 0;
                 _counterStimuliBlock = 0;
@@ -554,6 +626,17 @@ namespace Accelera.ViewModels
                 CurrentProgressPause = 0;
             }
         }
+
+        ///=================================================================================================
+        /// <summary>Pause progress background worker.
+        ///          This is only a wait task for the pause timer</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="sender">Source of the event.</param>
+        /// <param name="e">     Do work event information.</param>
+        ///=================================================================================================
+
         private void PauseProgressBackgroundWorker(object sender, DoWorkEventArgs e)
         {
             while ((_elapsedPauseTime < _configuration.PauseTimeinSeconds) & (_pauseProgressBackgroundWorker.CancellationPending == false))
@@ -567,10 +650,20 @@ namespace Accelera.ViewModels
             }
             if (_elapsedPauseTime == _configuration.PauseTimeinSeconds)
             {
-                e.Result = 15;
+                e.Result = BackgroundWorkerResults.PauseTimerFinished;
             }
         }
- 
+
+        ///=================================================================================================
+        /// <summary>Single progress block background worker.
+        ///          This is only a wait tast for the single block timer</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="sender">Source of the event.</param>
+        /// <param name="e">     Do work event information.</param>
+        ///=================================================================================================
+
         private void SingleProgressBlockBackgroundWorker(object sender, DoWorkEventArgs e)
         {
             while ((_counterStimuliBlock < _stimuliPerBlock) & (_counterBlocks < _configuration.BlockRepetitions) & (_singleProgressBlockBackgroundWorker.CancellationPending == false))
@@ -584,17 +677,27 @@ namespace Accelera.ViewModels
             }
             if (_counterStimuliBlock == _stimuliPerBlock)
             {
-                _currentStimulationBlockFinished = true;
-                e.Result = _currentStimulationBlockFinished;
+                e.Result = BackgroundWorkerResults.StimulationBlockFinished;
             }
         }
+
+        ///=================================================================================================
+        /// <summary>Single progress block background worker completed.
+        ///          If the timer is completed, the pause timer will be started</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="sender">Source of the event.</param>
+        /// <param name="e">     Run worker completed event information.</param>
+        ///=================================================================================================
+
         private void SingleProgressBlockBackgroundWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
             if (e.Cancelled == true)
             {
                 Globals.Log.Info("Block Backgroundworker canceled." + _counterStimuliBlock.ToString());
             }
-            else if ((bool)e.Result == _currentStimulationBlockFinished)
+            else if ((BackgroundWorkerResults)e.Result == BackgroundWorkerResults.StimulationBlockFinished)
             {
                 _tsStimulationTimer.Cancel();
                 _counterBlocks++;
@@ -624,6 +727,18 @@ namespace Accelera.ViewModels
                 }
             }
         }
+
+        ///=================================================================================================
+        /// <summary>Save data progress dialog worker thread.
+        ///          Saves data to a file and reports the progress to a progress bar dialog.
+        ///          </summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="sender">Source of the event.</param>
+        /// <param name="e">     Do work event information.</param>
+        ///=================================================================================================
+
         private void SaveProgressDialogDoWork(object sender, DoWorkEventArgs e)
         {
             double progress = 0;
@@ -659,10 +774,22 @@ namespace Accelera.ViewModels
                         }
                     }
                 }
-                _dataSavingFinished = true;
-                e.Result = _dataSavingFinished;
+                e.Result = BackgroundWorkerResults.DataSavingFinished;
             }
         }
+
+        ///=================================================================================================
+        /// <summary>Saves the progress dialog completed.
+        ///          Once, data saving has finished the summary (.info) file and the timestep file (.time)
+        ///          will be created and saved with the same filename but different extensions. Afterwards,
+        ///          the VCP will be closed and disposed and the window will be closed.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="sender">Source of the event.</param>
+        /// <param name="e">     Run worker completed event information.</param>
+        ///=================================================================================================
+
         private void SaveProgressDialogCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
             if (e.Cancelled == true)
@@ -670,7 +797,7 @@ namespace Accelera.ViewModels
                 Globals.Log.Info("Saving data file cancelled.");
                 MessageBox.Show("Saving of data file was cancelled. Data might be corrupt or not complete.", "Information");
             }
-            else if ((bool)e.Result == _dataSavingFinished)
+            else if ((BackgroundWorkerResults)e.Result == BackgroundWorkerResults.DataSavingFinished)
             {
                 //save summary file
                 _configuration.TotalNumberOfAquiredBlocks = _counterBlocks;
@@ -759,6 +886,16 @@ namespace Accelera.ViewModels
             CurrentProgressTotal = _counterStimuliTotal;
         }
 
+        ///=================================================================================================
+        /// <summary>Pause timer tick.
+        ///          This method is called on every tick of the timer which controlls the pause between </summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="sender">Source of the event.</param>
+        /// <param name="e">     Event information.</param>
+        ///=================================================================================================
+
         private void PauseTimerTick(object sender, EventArgs e)
         {
             CurrentProgressPause++;
@@ -766,9 +903,7 @@ namespace Accelera.ViewModels
         }
         #endregion
 
-        #region Button Click Methods
-
-       
+        #region Button Click Methods     
         ///=================================================================================================
         /// <summary>Executes the 'start button clicked' action.
         ///          The com port will be opened, the _configuration object will be updated from the UI, the
@@ -1014,6 +1149,16 @@ namespace Accelera.ViewModels
                 _saveProgressDialog.Show();
             }
         }
+
+        ///=================================================================================================
+        /// <summary>Executes the 'save as button clicked' action.
+        ///          This method shows the 'SaveAsView' which allows the user to add some additional 
+        ///          information and save these in a seperate file.
+        ///          </summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///=================================================================================================
+
         private void OnSaveAsButtonClicked()
         {
             Globals.Log.Wpf("SAVE AS BUTTON CLICKED.");
@@ -1083,15 +1228,19 @@ namespace Accelera.ViewModels
         #endregion
 
         #region Data Collection and Signal Processing       
-        /// <summary>
-        /// Task which collects the data from the COM port. In this method the 
-        /// incoming data stream will be analized. The length of one data frame is 
-        /// defined in the "hw" class. Each data frame will be analyzed and the data 
-        /// will be converted from raw data to data values in SI units.
-        /// Each data frame will be stored using a producer/consumer model. The producer
-        /// is the DataCollectionTask and the consumer will be the signal processing task.
-        /// </summary>
-        /// <returns></returns>
+
+        ///=================================================================================================
+        /// <summary>Task which collects the data from the COM port. In this method the incoming data
+        /// stream will be analized. The length of one data frame is defined in the "hw" class. Each data
+        /// frame will be analyzed and the data will be converted from raw data to data values in SI
+        /// units. Each data frame will be stored using a producer/consumer model. The producer is the
+        /// DataCollectionTask and the consumer will be the signal processing task.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>A Task.</returns>
+        ///=================================================================================================
+
         private async Task DataCollectionTask()
         {
             List<Byte> dataStream = new List<Byte>();
@@ -1167,15 +1316,20 @@ namespace Accelera.ViewModels
                 }
             }
         }
-        /// <summary>
-        /// This task consumes the received data from the COM port. The method will pack the data
-        /// into data tuples and store each tuple in a list object. The data will also be stored in the 
-        /// "_storageData" List for the possibility of saving the data to the disk.
-        /// Once there are enough data points in the list (the number is defined by the constant value
-        /// "MinimumDataSizePrioDownsampling" the method will invalidate the plots and redraw them. After 
-        /// this, the tuple lists will be cleared again for the next bunch of data sets.
-        /// </summary>
-        /// <returns></returns>
+
+        ///=================================================================================================
+        /// <summary>This task consumes the received data from the COM port. The method will pack the data
+        /// into data tuples and store each tuple in a list object. The data will also be stored in the
+        /// "_storageData" List for the possibility of saving the data to the disk. Once there are enough
+        /// data points in the list (the number is defined by the constant value
+        /// "MinimumDataSizePrioDecimation" the method will invalidate the plots and redraw them. After
+        /// this, the tuple lists will be cleared again for the next bunch of data sets.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <returns>A Task.</returns>
+        ///=================================================================================================
+
         private async Task SignalProcessingTask()
         {
             ISourceBlock<DataModel> dataSourceBlock = _dataBufferBlock;
@@ -1210,7 +1364,7 @@ namespace Accelera.ViewModels
 
 
                 //show the complete dataset at once
-                if ((counter % _configuration.NumberOfSamplesPerAcousticStimulus) == 0)  //MinimumDataSizePrioDownsampling
+                if ((counter % _configuration.NumberOfSamplesPerAcousticStimulus) == 0)  //MinimumDataSizePrioDecimation
                 {
                     DrawPoints(AccelerationPlotModel, absAccelerationTuples);
                     absAccelerationTuples.Clear();
@@ -1218,18 +1372,24 @@ namespace Accelera.ViewModels
             }
         }
 
-        /// <summary>
-        /// Largest-Triangle-Three Bucket Downsampling. When graphing large sets of data, plotting fewer points but still
-        /// representing the data visually can be challenging. Loading 500 vs. 5000 points can help improve load time and
-        /// reduce system resources. A co-worker pointed me in the direction of a downsampling plugin for flot charts.
-        /// The author, Svein Steinarsson, published a paper detailing several downlsampling algorithms for graphs.
-        /// https://www.danielwjudge.com/largest-triangle-three-bucket-downsampling-c/
-        /// https://skemman.is/bitstream/1946/15343/3/SS_MSthesis.pdf
-        /// https://github.com/sveinn-steinarsson
-        /// </summary>
-        /// <param name="data"></param>
-        /// <param name="threshold"></param>
-        /// <returns></returns>
+        ///=================================================================================================
+        /// <summary>Largest-Triangle-Three Bucket Downsampling. When graphing large sets of data,
+        /// plotting fewer points but still representing the data visually can be challenging. Loading
+        /// 500 vs. 5000 points can help improve load time and reduce system resources. A co-worker
+        /// pointed me in the direction of a downsampling plugin for flot charts. The author, Svein
+        /// Steinarsson, published a paper detailing several downlsampling algorithms for graphs.
+        /// https://www.danielwjudge.com/largest-triangle-three-bucket-downsampling-c/https://skemman.is/bitstream/1946/15343/3/SS_MSthesis.pdf
+        /// https://github.com/sveinn-steinarsson.</summary>
+        ///
+        /// <remarks>Bernhard Gleich, 19.04.2023.</remarks>
+        ///
+        /// <param name="data">     .</param>
+        /// <param name="threshold">.</param>
+        ///
+        /// <returns>An enumerator that allows foreach to be used to process largest triangle three
+        /// buckets in this collection.</returns>
+        ///=================================================================================================
+
         private IEnumerable<Tuple<double, double>> LargestTriangleThreeBuckets(List<Tuple<double, double>> data, int threshold)
         {
             int dataLength = data.Count;
