@@ -416,7 +416,6 @@ FodyWeavers.xsd
 >>>>>>> bb5cad48c4b3dcad86ea0827a0215d7b6ef6944f
 *.js
 *.tex
-*.bmp
 *.css
 *.lst
 *.sty
