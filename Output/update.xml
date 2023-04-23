@@ -3,13 +3,14 @@
     <version>1.0.1.23113</version>
     <url>na</url>
     <fileName>setup_accelera.exe</fileName>
-    <md5>D89FB717107BDFDDA711C0630A0DF96C</md5>
+    <md5>122602763B65192BA2EF4565C2777D57</md5>
     <description>23.04.2023 Update:
     - software generates *.info and *.time files with additonal information on pauses and resumes
     - software loads data files and generates a real time axis including the pauses and resumes during data aquisition
     - loaded data sets are decimated to increase performance while loading large data sets
     - software has progress bars to show progress while loading or saving data from or to the disk
     - a bug was fixed which prevents the software to resume a paused protocol
+    
 </description>
     <launchArgs>
     </launchArgs>
