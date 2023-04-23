@@ -33,8 +33,8 @@ OutputBaseFilename=setup_accelera
 ;Encryption=yes
 Compression=lzma
 SolidCompression=yes
-WizardImageFile=InnoSetup\Screen.png
-WizardSmallImageFile=InnoSetup\logo.gif
+WizardImageFile=InnoSetup\Screen.bmp
+WizardSmallImageFile=InnoSetup\logo.bmp
 CreateUninstallRegKey=yes
 
 DisableReadyPage=no
