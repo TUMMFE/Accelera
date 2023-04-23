@@ -37,7 +37,7 @@ namespace Accelera.ViewModels
         public const int MaximumRollover = 1000; //maximum value at which plot rollover will occur. Rollover will generate the illusion of moving time axis.
         public const int DecimationFactor = 10;  //this decimation factor is used only in the data aquisition modes
         public const int MinimumDataSizePrioDecimation = 100; //decimation will start when more data than this value is available
-        public const int MaximumDataPlotOffline = 40000; //this is only used when loading large data sets from the disk to improve performance
+        public const int MaximumDataPlotOffline = 10000; //this is only used when loading large data sets from the disk to improve performance
         private const int DisposeFirstDataFrameNumbers = 50; //number of data frames which will be thrown away when stiching block wise data together
         #endregion
 
@@ -393,70 +393,77 @@ namespace Accelera.ViewModels
             }
             else
             {
-                //a info file is available - read it line by line and extract the necessary information
+                //a info file is available 
                 Globals.Log.Info("Info file available: " + infoFileName);
-                var lines = File.ReadAllLines(infoFileName);
-                for (var i = 0; i < lines.Length; i += 1)
+            }
+            try
+            {
+                //look for a time stamp file to create a real time vector of the experiment
+                List<TimeMarks> tm = new List<TimeMarks>();
+                tm = ReadTimestampFile();
+                if (tm.Count > 0)
                 {
-                    var line = lines[i];
-                    // Process line
-                }
-                try
-                { 
-                    List<TimeMarks> tm = new List<TimeMarks>();
-                    tm = ReadTimestampFile();
-                    if (tm.Count > 0)
+                //1. find number of samples of the first event
+                //start with the first sample number 0 and count until the next sample number is zero again
+                // thus, find the index of the second 0 in the sample id column, we expect the second zero at a
+                // index of a few thousend, thus sorting like in 
+                // https://stackoverflow.com/questions/52446285/get-indexof-second-int-record-in-a-sorted-list-in-c-sharp
+                // might be too slow.
+                
+                    int cnt = 1;
+                    while (cnt < _openData.Count)
                     {
-                        //1. find number of samples of the first event
-                        //start with the first sample number 0 and count until the next sample number is zero again
-                        // thus, find the index of the second 0 in the sample id column, we expect the second zero at a
-                        // index of a few thousend, thus sorting like in 
-                        // https://stackoverflow.com/questions/52446285/get-indexof-second-int-record-in-a-sorted-list-in-c-sharp
-                        // might be too slow.
-                        int cnt = 1;
-                        while (cnt < _openData.Count)
+                        if (_openData[cnt].SampleId != 0)
                         {
-                            if (_openData[cnt].SampleId != 0)
-                            {
-                                cnt++;
-                            }
-                            else
-                            {
-                                break;
-                            }
+                            cnt++;
                         }
-                        int numberOfSamplesPerEvent = cnt;
-                        double timestep = _openData[1].TimeInSec;       //time step which is 1/output datarate
-                        List<TimeMarks> daqTimeMarks = tm.Where(x => x.Type == "DAQ Started").ToList();
-                        daqTimeMarks.RemoveAt(0); //delete first element because this is always at time 0
+                        else
+                        {
+                            break;
+                        }
+                    }
+                    int numberOfSamplesPerEvent = cnt;
+                    double timestep = _openData[1].TimeInSec;       //time step which is 1/output datarate
+                    List<TimeMarks> daqTimeMarks = tm.Where(x => x.Type == "DAQ Started").ToList();
+                    daqTimeMarks.RemoveAt(0); //delete first element because this is always at time 0
 
-                        for (int i = 0; i < _openData.Count; i++)
-                        {
-                            _openData[i].TimeInSec = _openData[i].TimeInSec + _openData[i].EventId * timestep;
-                        }
+                    for (int i = 0; i < _openData.Count; i++)
+                    {
+                        _openData[i].TimeInSec = _openData[i].TimeInSec + _openData[i].EventId * timestep;
+                    }
 
-                        //2. include the DAQ start times
-                        for (int i = 0; i< daqTimeMarks.Count; i++)
+                    //2. include the DAQ start times
+                    for (int i = 0; i < daqTimeMarks.Count; i++)
+                    {
+                        for (int j = 0; j < _openData.Count; j++)
                         {
-                            for (int j = 0; j<_openData.Count; j++)
+                            if (j / numberOfSamplesPerEvent > i)
                             {
-                                if (j / numberOfSamplesPerEvent > i)
-                                {
-                                    _openData[j].TimeInSec = _openData[j].TimeInSec + daqTimeMarks[i].RelativeTimeStamp - _openData[i * numberOfSamplesPerEvent].TimeInSec;
-                                }
+                                _openData[j].TimeInSec = _openData[j].TimeInSec + daqTimeMarks[i].RelativeTimeStamp - _openData[i * numberOfSamplesPerEvent].TimeInSec;
                             }
                         }
-                        //todo: convert time axis to a continous time frame. Stich all together.
                     }
                     _openData.RemoveAll(s => s.SampleId <= DisposeFirstDataFrameNumbers);
-                }
-                catch
+
+                } else
                 {
-                    MessageBox.Show("Wrong file format of info file.", "Error");
-                    Globals.Log.Warn("Wrong info file format.");
+                    //there are not saved time marks so we need to create continous time vector to improve plotting performance
+                    double timestep = _openData[1].TimeInSec;       //time step which is 1/output datarate
+                    for (int i =0; i< _openData.Count; i++)
+                    {
+                        _openData[i].TimeInSec =  i*timestep;
+                    }
+
                 }
+                
+                //remove all useles data values
+                _openData.RemoveAll(s => (s.XRawData == 0 || s.YRawData == 0 || s.ZRawData == 0 || s.TempRawData == 0));
             }
-            _openData.RemoveAll(s => (s.XRawData == 0 || s.YRawData == 0 || s.ZRawData == 0 || s.TempRawData == 0));
+            catch
+            {
+                MessageBox.Show("Wrong file format of info file.", "Error");
+                Globals.Log.Warn("Wrong info file format.");
+            }                       
         }
 
         ///=================================================================================================
