@@ -52,6 +52,18 @@ namespace Accelera.ViewModels
         private ConnectDialogModel _connectModel;
         private ConfigurationModel _configuration;
 
+        private string _fileNameSave = string.Empty;
+        private string _fileNameOpen = string.Empty;
+        List<DataModel> _openData = new List<DataModel>();
+
+        private bool _isRunning;
+        private bool _isConnected;
+        private bool _isDataAvailable;
+        private bool _isRunningAcoustic;
+        private bool _isRunningExternal;
+
+        private bool _dataSavingFinished = false;
+
         private ProgressDialog _saveProgressDialog = new ProgressDialog() 
         {
             WindowTitle = "Save data",
@@ -68,20 +80,7 @@ namespace Accelera.ViewModels
             Description = "Processing...",
             ShowTimeRemaining = true,
             CancellationText = "Loading canceled. Datafile will not be shown.",
-        };
-        private string _fileNameSave = string.Empty;
-        private string _fileNameOpen = string.Empty;
-        List<DataModel> _openData = new List<DataModel>();
-
-        private bool _isRunning;
-        private bool _isConnected;
-        private bool _isDataAvailable;
-        private bool _isRunningAcoustic;
-        private bool _isRunningExternal;
-
-        private bool _dataSavingFinished = false;
-        
-        
+        };        
         #endregion
 
         #region Public Members 
@@ -403,25 +402,53 @@ namespace Accelera.ViewModels
                     // Process line
                 }
                 try
-                {
-                    _openData.RemoveAll(s => s.SampleId <= DisposeFirstDataFrameNumbers);
+                { 
                     List<TimeMarks> tm = new List<TimeMarks>();
                     tm = ReadTimestampFile();
                     if (tm.Count > 0)
                     {
+                        //1. find number of samples of the first event
+                        //start with the first sample number 0 and count until the next sample number is zero again
+                        // thus, find the index of the second 0 in the sample id column, we expect the second zero at a
+                        // index of a few thousend, thus sorting like in 
+                        // https://stackoverflow.com/questions/52446285/get-indexof-second-int-record-in-a-sorted-list-in-c-sharp
+                        // might be too slow.
+                        int cnt = 1;
+                        while (cnt < _openData.Count)
+                        {
+                            if (_openData[cnt].SampleId != 0)
+                            {
+                                cnt++;
+                            }
+                            else
+                            {
+                                break;
+                            }
+                        }
+                        int numberOfSamplesPerEvent = cnt;
+                        double timestep = _openData[1].TimeInSec;       //time step which is 1/output datarate
+                        List<TimeMarks> daqTimeMarks = tm.Where(x => x.Type == "DAQ Started").ToList();
+                        daqTimeMarks.RemoveAt(0); //delete first element because this is always at time 0
+
+                        for (int i = 0; i < _openData.Count; i++)
+                        {
+                            _openData[i].TimeInSec = _openData[i].TimeInSec + _openData[i].EventId * timestep;
+                        }
+
+                        //2. include the DAQ start times
+                        for (int i = 0; i< daqTimeMarks.Count; i++)
+                        {
+                            for (int j = 0; j<_openData.Count; j++)
+                            {
+                                if (j / numberOfSamplesPerEvent > i)
+                                {
+                                    _openData[j].TimeInSec = _openData[j].TimeInSec + daqTimeMarks[i].RelativeTimeStamp - _openData[i * numberOfSamplesPerEvent].TimeInSec;
+                                }
+                            }
+                        }
                         //todo: convert time axis to a continous time frame. Stich all together.
                     }
-
-                    int readStimulationRate = Convert.ToInt32(Regex.Match(lines[20], @"\d+").Value);
-                    int readPauseTime = Convert.ToInt32(Regex.Match(lines[30], @"\d+").Value);
-                    int eventDuration = 1000 / readStimulationRate;
-                    
-                    //change the data set file - adjust the time points and stich the events together
-                    for (int i = 0; i < _openData.Count; i += 1)
-                    {
-                        _openData[i].TimeInSec = _openData[i].TimeInSec + _openData[i].EventId * eventDuration + _openData[i].BlockId * readPauseTime;
-                    }
-
+                    _openData.RemoveAll(s => s.SampleId <= DisposeFirstDataFrameNumbers);
                 }
                 catch
                 {
@@ -429,9 +456,7 @@ namespace Accelera.ViewModels
                     Globals.Log.Warn("Wrong info file format.");
                 }
             }
-
             _openData.RemoveAll(s => (s.XRawData == 0 || s.YRawData == 0 || s.ZRawData == 0 || s.TempRawData == 0));
-
         }
 
         ///=================================================================================================

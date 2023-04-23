@@ -1,13 +1,15 @@
 <Updater>
   <update appID="Accelera">
-    <version>1.0.1.23106</version>
+    <version>1.0.1.23113</version>
     <url>na</url>
     <fileName>setup_accelera.exe</fileName>
-    <md5>6E7856A3433D3F5CE70A0D526F5D0F54</md5>
-    <description>16.04.2023 Update:
-    - alpha Version for initial tests
-    - external Trigger Mode not implemented yet
-    - need .Net Framework 4.8 which may needed to be installed seperate
+    <md5>D89FB717107BDFDDA711C0630A0DF96C</md5>
+    <description>23.04.2023 Update:
+    - software generates *.info and *.time files with additonal information on pauses and resumes
+    - software loads data files and generates a real time axis including the pauses and resumes during data aquisition
+    - loaded data sets are decimated to increase performance while loading large data sets
+    - software has progress bars to show progress while loading or saving data from or to the disk
+    - a bug was fixed which prevents the software to resume a paused protocol
 </description>
     <launchArgs>
     </launchArgs>

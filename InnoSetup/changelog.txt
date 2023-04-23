@@ -4,6 +4,13 @@
 
 Changelog
 =========
+Version 1.0.1.23113
+-------------------
+- software generates *.info and *.time files with additonal information on pauses and resumes
+- software loads data files and generates a real time axis including the pauses and resumes during data aquisition
+- loaded data sets are decimated to increase performance while loading large data sets
+- software has progress bars to show progress while loading or saving data from or to the disk
+- a bug was fixed which prevents the software to resume a paused protocol
 
 Version 1.0.1.23101
 -------------------
