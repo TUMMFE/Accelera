@@ -335,12 +335,6 @@
     <PackageReference Include="OxyPlot.Wpf">
       <Version>2.1.2</Version>
     </PackageReference>
-    <PackageReference Include="RealTimeGraphX">
-      <Version>1.0.17</Version>
-    </PackageReference>
-    <PackageReference Include="RealTimeGraphX.WPF">
-      <Version>1.0.17</Version>
-    </PackageReference>
     <PackageReference Include="SSH.NET">
       <Version>2020.0.2</Version>
     </PackageReference>

@@ -405,9 +405,9 @@ namespace Accelera.ViewModels
             _usedDeviceVcp.Rxbuffer.Complete();
             _usedDeviceVcp.Restart();
 
-            PreparePlotForDaq(xOffsetModel, OxyColors.DodgerBlue, "time in s", "acceleration in LSB");
-            PreparePlotForDaq(yOffsetModel, OxyColors.DarkGreen, "time in s", "acceleration in LSB");
-            PreparePlotForDaq(zOffsetModel, OxyColors.DarkOrange, "time in s", "acceleration in LSB");
+            PreparePlotForDaq(xOffsetModel, OxyColor.FromRgb(43, 138, 128), "time in s", "acceleration in LSB");
+            PreparePlotForDaq(yOffsetModel, OxyColor.FromRgb(100, 20, 120), "time in s", "acceleration in LSB");
+            PreparePlotForDaq(zOffsetModel, OxyColor.FromRgb(191, 115, 28), "time in s", "acceleration in LSB");
             
             _usedDeviceVcp.Port.StartListening();
             
